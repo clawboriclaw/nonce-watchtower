@@ -72,12 +72,36 @@ class NftLockClassificationTests(unittest.TestCase):
     def _report(self, **tok):
         from watchtower.scan import findings
         item = {"account": "Acct111", "mint": "Mint111", "owner": "W", "state": "frozen", "delegate": "D111",
-                "delegated_amount": "1", "delegated_ui": "1", "close_authority": None, "amount": "1", "decimals": 0}
+                "delegated_amount": "1", "delegated_ui": "1", "close_authority": None, "amount": "1", "decimals": 0,
+                "mint_checked": True, "mint_supply": "1", "mint_freeze_authority": None}
         item.update(tok)
         rep = {"wallets": [{"pubkey": "W", "label": "", "nonces": {"status": "ok", "items": []},
                             "token_accounts": {"status": "ok", "items": [item], "permanent_delegates": []}}],
                "mints": [], "programs": []}
         return findings(rep)
+
+    def test_thawable_lock_is_medium_not_info(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report(mint_freeze_authority="EditionPda111")}
+        self.assertIn(("nft_lock_delegate", "medium"), kinds)
+
+    def test_fungible_decimals0_supply_gt1_stays_high(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report(mint_supply="1000000")}
+        self.assertIn(("token_delegate", "high"), kinds)
+
+    def test_unverified_mint_stays_high(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report(mint_checked=False)}
+        self.assertIn(("token_delegate", "high"), kinds)
+
+    def test_permanent_delegate_unaffected_by_lock_carveout(self):
+        from watchtower.scan import findings
+        item = {"account": "A", "mint": "M", "owner": "W", "state": "frozen", "delegate": "D", "delegated_amount": "1",
+                "delegated_ui": "1", "close_authority": None, "amount": "1", "decimals": 0, "mint_checked": True,
+                "mint_supply": "1", "mint_freeze_authority": None}
+        rep = {"wallets": [{"pubkey": "W", "label": "", "nonces": {"status": "ok", "items": []},
+                            "token_accounts": {"status": "ok", "items": [item],
+                                               "permanent_delegates": [{"mint": "M", "delegate": "P"}]}}],
+               "mints": [], "programs": []}
+        self.assertIn(("mint_permanent_delegate", "medium"), {(f["kind"], f["severity"]) for f in findings(rep)})
 
     def test_frozen_one_of_one_is_info_lock(self):
         kinds = {(f["kind"], f["severity"]) for f in self._report()}

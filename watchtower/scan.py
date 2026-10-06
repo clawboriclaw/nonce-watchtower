@@ -139,11 +139,47 @@ def _token_item(entry, program):
     }
 
 
-def is_nft_lock(it):
-    """A frozen 1-of-1 token (decimals 0, balance 1) delegated for exactly 1: the shape NFT/pNFT staking and
-    marketplace locks leave. Still reported (a delegate is a delegate), but as info, not as a high-risk approval."""
+def _lock_shape(it):
     return (it.get("state") == "frozen" and it.get("decimals") == 0 and it.get("amount") == "1"
             and it.get("delegated_amount") == "1")
+
+
+def is_nft_lock(it):
+    """Frozen, delegated-for-1 holding of a VERIFIED 1-of-1 mint (supply == 1, decimals 0): the shape NFT/pNFT
+    staking and marketplace locks leave. Requires the mint to have been fetched; unverified stays a plain delegate.
+    Independent review 2026-10-06: decimals-0 + balance-1 alone also matches fungibles; frozen is only safe while
+    nobody can thaw it (see lock_severity)."""
+    return _lock_shape(it) and it.get("mint_checked") is True and it.get("mint_supply") == "1"
+
+
+def lock_severity(it):
+    """info only when the mint's freeze authority is renounced (nobody can thaw, so the delegate can never act);
+    otherwise medium: a thaw re-arms the delegate, possibly in the same transaction."""
+    return "info" if it.get("mint_freeze_authority") is None else "medium"
+
+
+def enrich_lock_candidates(client, items):
+    """Fetch supply + freeze authority for mints of lock-shaped items. Failure leaves them unverified (= loud)."""
+    mints = sorted({it["mint"] for it in items if _lock_shape(it) and it.get("mint")})
+    info, errors = {}, []
+    for i in range(0, len(mints), 100):
+        chunk = mints[i : i + 100]
+        try:
+            res = client.call("getMultipleAccounts", [chunk, {"encoding": "jsonParsed"}])
+            values = res.get("value", [])
+            if len(values) != len(chunk):
+                raise ValueError(f"getMultipleAccounts returned {len(values)} values for {len(chunk)} mints")
+            for mint, v in zip(chunk, values):
+                parsed = (v or {}).get("data", {}).get("parsed", {}) if isinstance((v or {}).get("data"), dict) else {}
+                if parsed.get("type") == "mint":
+                    info[mint] = parsed["info"]
+        except (RpcError, RpcUnavailable, KeyError, TypeError, AttributeError, ValueError) as e:
+            errors.append(str(e))
+    for it in items:
+        mi = info.get(it.get("mint"))
+        if _lock_shape(it) and mi is not None:
+            it.update(mint_checked=True, mint_supply=str(mi.get("supply")), mint_freeze_authority=mi.get("freezeAuthority"))
+    return errors
 
 
 def scan_token_accounts(client, owner):
@@ -311,6 +347,9 @@ def run_scan(client, wallets, mints=(), programs=()):
                 "advice": GPA_ADVICE,
             }
         tokens, mints_2022 = scan_token_accounts(client, pk)
+        lock_err = enrich_lock_candidates(client, tokens["items"])
+        if lock_err:
+            tokens["lock_check_errors"] = lock_err  # unverified locks stay plain (loud) delegates
         perm, perm_err = scan_permanent_delegates(client, mints_2022)
         tokens["permanent_delegates"] = [{"mint": m, "delegate": d} for m, d in sorted(perm.items()) if d != pk]
         tokens["permanent_delegates_status"] = "ok" if not perm_err and tokens["program_status"][TOKEN_2022_PROGRAM] == "ok" else "unavailable"
@@ -376,8 +415,11 @@ def findings(report):
             add("warn", "coverage_gap", w["pubkey"], f"token-account check {t['status']}: {'; '.join(t.get('errors', []))}", who)
         for it in t.get("items", []):
             if it["delegate"] and is_nft_lock(it):
-                add("info", "nft_lock_delegate", it["account"],
-                    f"frozen 1-of-1 token (mint {it['mint']}) delegated to {it['delegate']}: typical NFT staking/marketplace lock",
+                sev = lock_severity(it)
+                add(sev, "nft_lock_delegate", it["account"],
+                    f"frozen 1-of-1 NFT (mint {it['mint']}) delegated to {it['delegate']}: typical staking/marketplace lock"
+                    + ("; freeze authority renounced, cannot be thawed" if sev == "info"
+                       else f"; mint freeze authority {it['mint_freeze_authority']} can thaw it, which re-arms the delegate"),
                     who)
             elif it["delegate"]:
                 live = it["delegated_amount"] not in (None, "0")
