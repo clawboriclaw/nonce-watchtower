@@ -134,7 +134,16 @@ def _token_item(entry, program):
         "delegated_amount": delegated.get("amount"),
         "delegated_ui": delegated.get("uiAmountString"),
         "close_authority": info.get("closeAuthority"),
+        "amount": (info.get("tokenAmount") or {}).get("amount"),
+        "decimals": (info.get("tokenAmount") or {}).get("decimals"),
     }
+
+
+def is_nft_lock(it):
+    """A frozen 1-of-1 token (decimals 0, balance 1) delegated for exactly 1: the shape NFT/pNFT staking and
+    marketplace locks leave. Still reported (a delegate is a delegate), but as info, not as a high-risk approval."""
+    return (it.get("state") == "frozen" and it.get("decimals") == 0 and it.get("amount") == "1"
+            and it.get("delegated_amount") == "1")
 
 
 def scan_token_accounts(client, owner):
@@ -366,7 +375,11 @@ def findings(report):
         if t["status"] != "ok":
             add("warn", "coverage_gap", w["pubkey"], f"token-account check {t['status']}: {'; '.join(t.get('errors', []))}", who)
         for it in t.get("items", []):
-            if it["delegate"]:
+            if it["delegate"] and is_nft_lock(it):
+                add("info", "nft_lock_delegate", it["account"],
+                    f"frozen 1-of-1 token (mint {it['mint']}) delegated to {it['delegate']}: typical NFT staking/marketplace lock",
+                    who)
+            elif it["delegate"]:
                 live = it["delegated_amount"] not in (None, "0")
                 add(
                     "high" if live else "medium",
@@ -376,7 +389,11 @@ def findings(report):
                     who,
                 )
             if it["close_authority"] and it["close_authority"] != w["pubkey"]:
-                add("medium", "foreign_close_authority", it["account"], f"close authority {it['close_authority']} on mint {it['mint']}", who)
+                if it["delegate"] and is_nft_lock(it):
+                    # Lock programs set a per-position close authority; SPL only lets it close an EMPTY account.
+                    add("info", "nft_lock_close_authority", it["account"], f"close authority {it['close_authority']} on locked 1-of-1 mint {it['mint']}", who)
+                else:
+                    add("medium", "foreign_close_authority", it["account"], f"close authority {it['close_authority']} on mint {it['mint']}", who)
             if it["state"] == "frozen":
                 add("info", "frozen_account", it["account"], f"token account for mint {it['mint']} is frozen", who)
         for pd in t.get("permanent_delegates", []):

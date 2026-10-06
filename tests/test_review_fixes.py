@@ -64,3 +64,42 @@ class MultipleAccountsLengthGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NftLockClassificationTests(unittest.TestCase):
+    """Outreach scan of a real signer showed 132 'high' delegates that were frozen 1-of-1 NFT staking locks."""
+
+    def _report(self, **tok):
+        from watchtower.scan import findings
+        item = {"account": "Acct111", "mint": "Mint111", "owner": "W", "state": "frozen", "delegate": "D111",
+                "delegated_amount": "1", "delegated_ui": "1", "close_authority": None, "amount": "1", "decimals": 0}
+        item.update(tok)
+        rep = {"wallets": [{"pubkey": "W", "label": "", "nonces": {"status": "ok", "items": []},
+                            "token_accounts": {"status": "ok", "items": [item], "permanent_delegates": []}}],
+               "mints": [], "programs": []}
+        return findings(rep)
+
+    def test_frozen_one_of_one_is_info_lock(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report()}
+        self.assertIn(("nft_lock_delegate", "info"), kinds)
+        self.assertNotIn(("token_delegate", "high"), kinds)
+
+    def test_fungible_delegate_stays_high(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report(state="initialized", amount="5000000", decimals=6,
+                                                                  delegated_amount="5000000")}
+        self.assertIn(("token_delegate", "high"), kinds)
+
+    def test_unfrozen_nft_delegate_stays_high(self):
+        # An NFT delegate that is NOT locked can be transferred right now: keep it loud.
+        kinds = {(f["kind"], f["severity"]) for f in self._report(state="initialized")}
+        self.assertIn(("token_delegate", "high"), kinds)
+
+    def test_lock_close_authority_is_info(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report(close_authority="PdaLock111")}
+        self.assertIn(("nft_lock_close_authority", "info"), kinds)
+        self.assertNotIn(("foreign_close_authority", "medium"), kinds)
+
+    def test_close_authority_on_fungible_stays_medium(self):
+        kinds = {(f["kind"], f["severity"]) for f in self._report(close_authority="Other111", state="initialized",
+                                                                  amount="5", decimals=6, delegated_amount="5")}
+        self.assertIn(("foreign_close_authority", "medium"), kinds)
