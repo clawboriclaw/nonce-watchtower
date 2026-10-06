@@ -1,0 +1,17 @@
+# nonce-watchtower config. Public keys only: this tool never needs or accepts a private key.
+# Secrets (RPC provider URL with API key, webhook URL) come from environment variables.
+# TOML rule: top-level settings must come BEFORE the first [[wallets]] block.
+rpc_url_env = "WATCHTOWER_RPC_URL"
+webhook_url_env = "WATCHTOWER_WEBHOOK_URL"
+# state_file = "wallets.state.json"   # default: next to this file
+
+# Mints whose mint/freeze/permanent-delegate authorities you want watched.
+mints = ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+
+# Program ids whose upgrade authority / redeploy slot you want watched.
+programs = ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"]
+
+# One block per key to watch: multisig members, treasury, deployer, payout wallets.
+[[wallets]]
+label = "council-member-1"
+pubkey = "1nc1nerator11111111111111111111111111111111"
