@@ -11,7 +11,7 @@ from .rpc import DEFAULT_RPC, RPC_ENV_VAR
 WEBHOOK_ENV_VAR = "WATCHTOWER_WEBHOOK_URL"
 
 
-TOP_LEVEL_KEYS = {"wallets", "mints", "programs", "rpc_url_env", "webhook_url_env", "state_file", "rpc_url", "webhook_url"}
+TOP_LEVEL_KEYS = {"wallets", "mints", "programs", "squads", "rpc_url_env", "webhook_url_env", "state_file", "rpc_url", "webhook_url"}
 
 
 class ConfigError(ValueError):
@@ -63,6 +63,7 @@ def load_config(path):
         "wallets": wallets,
         "mints": keys("mints"),
         "programs": keys("programs"),
+        "squads": keys("squads"),
         "rpc_url_env": raw.get("rpc_url_env", RPC_ENV_VAR),
         "webhook_url_env": raw.get("webhook_url_env", WEBHOOK_ENV_VAR),
         "state_file": raw.get("state_file"),
@@ -72,8 +73,8 @@ def load_config(path):
             "put RPC/webhook URLs in environment variables (rpc_url_env / webhook_url_env), not in the config "
             "file: they usually embed credentials"
         )
-    if not wallets and not cfg["mints"] and not cfg["programs"]:
-        raise ConfigError("config watches nothing (no wallets, mints or programs)")
+    if not wallets and not cfg["mints"] and not cfg["programs"] and not cfg["squads"]:
+        raise ConfigError("config watches nothing (no wallets, squads, mints or programs)")
     if cfg["state_file"] is None:
         cfg["state_file"] = os.path.splitext(os.path.abspath(path))[0] + ".state.json"
     elif not os.path.isabs(cfg["state_file"]):

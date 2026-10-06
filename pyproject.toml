@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonce-watchtower"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only monitor for Solana durable-nonce accounts, token delegates and authorities held by a set of keys."
 readme = "README.md"
 license = {text = "MIT"}

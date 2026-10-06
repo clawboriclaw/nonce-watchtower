@@ -24,7 +24,9 @@ from .decode import (
     decode_program,
     decode_programdata_header,
 )
+from .provenance import classify, nonce_provenance
 from .rpc import RPC_ENV_VAR, RpcError, RpcUnavailable
+from .squads import resolve_multisig, watched_keys
 
 GPA_ADVICE = (
     "This RPC endpoint would not serve getProgramAccounts on the System program, which is the only "
@@ -316,20 +318,73 @@ def scan_program(client, program_id):
     }
 
 
-def run_scan(client, wallets, mints=(), programs=()):
-    """wallets: list of {"pubkey", "label"}; returns a JSON-serialisable report."""
+def expand_squads(client, wallets, squads, fallback=None):
+    """Resolve each Squads v4 multisig and append its members, vault 0 and config authority to `wallets`.
+
+    `fallback` ({address: [[pubkey, role], ...]}, from the watch state) keeps the last known members
+    watched when resolution fails this cycle; the multisig is still reported as not ok.
+    """
+    fallback = fallback or {}
+    index = {w["pubkey"]: w for w in wallets}
+    multisigs = []
+    for addr in squads:
+        ms = resolve_multisig(client, addr)
+        if ms["status"] == "ok":
+            keys = watched_keys(ms)
+        elif addr in fallback:
+            keys = [tuple(k) for k in fallback[addr]]
+            ms["using_last_known_members"] = True
+        else:
+            keys = []
+        ms["watched_keys"] = [{"pubkey": pk, "role": role} for pk, role in keys]
+        for pk, role in keys:
+            tag = f"squads {addr[:4]}… {role}"
+            if pk in index:
+                w = index[pk]
+                w["label"] = w["label"] or tag
+            else:
+                w = {"pubkey": pk, "label": tag}
+                wallets.append(w)
+                index[pk] = w
+        multisigs.append(ms)
+    return multisigs
+
+
+def add_provenance(client, report, known=None):
+    """Attach creation provenance to every nonce item. `known` ({account: provenance}) skips settled lookups."""
+    known = known or {}
+    watched = {w["pubkey"]: (w["label"] or w["pubkey"]) for w in report["wallets"]}
+    for w in report["wallets"]:
+        for it in w["nonces"].get("items", []):
+            prev = known.get(it["account"])
+            if prev and prev.get("status") == "ok":
+                # Watched-set membership can change between cycles; re-classify against the current set.
+                it["provenance"] = classify(dict(prev), watched)
+            else:
+                it["provenance"] = nonce_provenance(client, it["account"], watched)
+
+
+def run_scan(client, wallets, mints=(), programs=(), squads=(), provenance=True, known_provenance=None,
+             squads_fallback=None):
+    """wallets: list of {"pubkey", "label"}; squads: Squads v4 multisig addresses whose members are added
+    to the watched keys. Returns a JSON-serialisable report."""
+    wallets = [{"pubkey": w["pubkey"], "label": w.get("label") or ""} for w in wallets]
     for w in wallets:
         require_pubkey(w["pubkey"], "wallet public key")
     for m in mints:
         require_pubkey(m, "mint address")
     for p in programs:
         require_pubkey(p, "program id")
+    for a in squads:
+        require_pubkey(a, "Squads multisig address")
+    multisigs = expand_squads(client, wallets, list(dict.fromkeys(squads)), squads_fallback)
 
     report = {
         "tool": "nonce-watchtower",
         "version": __version__,
         "scanned_at": _now(),
         "rpc": client.display,
+        "multisigs": multisigs,
         "nonce_coverage": check_nonce_canary(client) if wallets else {"status": "skipped"},
         "wallets": [],
         "mints": [],
@@ -371,15 +426,24 @@ def run_scan(client, wallets, mints=(), programs=()):
         r["held_by_watched"] = [watched[r["upgrade_authority"]]] if r.get("upgrade_authority") in watched else []
         report["programs"].append(r)
 
+    if provenance:
+        add_provenance(client, report, known_provenance)
+    report["provenance"] = "on" if provenance else "skipped"
     report["findings"] = findings(report)
     report["complete"] = is_complete(report)
     return report
 
 
 def is_complete(report):
+    for ms in report.get("multisigs", []):
+        if ms["status"] != "ok":
+            return False
     for w in report["wallets"]:
         if w["nonces"]["status"] != "ok" or w["token_accounts"]["status"] != "ok":
             return False
+        for it in w["nonces"].get("items", []):
+            if report.get("provenance") == "on" and (it.get("provenance") or {}).get("status") != "ok":
+                return False
     for m in report["mints"]:
         if m["status"] not in ("ok", "missing", "not_a_mint"):
             return False
@@ -389,11 +453,48 @@ def is_complete(report):
     return True
 
 
+def _fee_clause(pv):
+    if pv.get("fee_payer_outside"):
+        return f"fee paid by outside key {pv['fee_payer']} (relayer?)"
+    return f"fee paid by watched key {pv.get('fee_payer_watched')} ({pv['fee_payer']})"
+
+
+def outside_creator_text(pv):
+    """Never self-contradictory: names exactly which role (funder / initial authority / fee payer) was outside."""
+    funder = (f"funded by OUTSIDE key {pv['funder']}" if pv["funder"] in pv["outside_keys"]
+              else f"funded by watched key {pv.get('funder_watched')} ({pv['funder']})")
+    auth = ""
+    if pv.get("initial_authority") and pv["initial_authority"] in pv["outside_keys"]:
+        auth = f"; initial nonce authority was OUTSIDE key {pv['initial_authority']} (authority later moved to your key)"
+    return (f"{funder}{auth}; {_fee_clause(pv)}; at {pv['created_at']} in {pv['signature']}. Someone else staging a "
+            "nonce on your key is the Drift precursor: find out who, or advance/withdraw it.")
+
+
+def outside_fee_payer_text(pv):
+    return (f"funded by watched key {pv.get('funder_watched')} ({pv['funder']}); {_fee_clause(pv)} at {pv['created_at']} "
+            f"in {pv['signature']}. A sponsored fee is common, but confirm you know who relayed it.")
+
+
 def findings(report):
     out = []
 
     def add(sev, kind, subject, detail, wallet=""):
         out.append({"severity": sev, "kind": kind, "wallet": wallet, "subject": subject, "detail": detail})
+
+    for ms in report.get("multisigs", []):
+        if ms["status"] != "ok":
+            held = " Last known members are still being watched." if ms.get("using_last_known_members") else (
+                " Its member keys are NOT being watched.")
+            add("warn", "squads_" + ms["status"], ms["address"], ms.get("error", "") + held)
+            continue
+        add("info", "squads_multisig", ms["address"],
+            f"Squads v4 {ms['threshold']}-of-{len(ms['members'])}, time lock {ms['time_lock']}s; watching "
+            f"{len(ms['watched_keys'])} key(s) (members, vault 0 {ms['vaults'][0]['address']}"
+            + (", config authority" if ms.get("config_authority") else "") + ")")
+        if ms.get("config_authority"):
+            add("medium", "squads_config_authority", ms["address"],
+                f"controlled multisig: config authority {ms['config_authority']} can change members and threshold "
+                "without a member vote")
 
     for w in report["wallets"]:
         who = w["label"] or w["pubkey"]
@@ -410,6 +511,21 @@ def findings(report):
                 "advance or withdraw it now.",
                 who,
             )
+            pv = it.get("provenance")
+            if pv is None:
+                continue
+            if pv["status"] != "ok":
+                add("warn", "provenance_unavailable", it["account"],
+                    f"provenance {pv['status']}: {pv.get('error', '')}. Who created this nonce account is UNKNOWN; "
+                    "it is not cleared", who)
+            elif pv["creator"] == "outside":
+                add("high", "nonce_outside_creator", it["account"], outside_creator_text(pv), who)
+            else:
+                add("info", "nonce_created_by_watched", it["account"],
+                    f"funded by watched key {pv['funder_watched']} ({pv['funder']}) at {pv['created_at']} in "
+                    f"{pv['signature']}", who)
+            if pv["status"] == "ok" and pv["creator"] == "watched" and pv.get("fee_payer_outside"):
+                add("medium", "nonce_outside_fee_payer", it["account"], outside_fee_payer_text(pv), who)
         t = w["token_accounts"]
         if t["status"] != "ok":
             add("warn", "coverage_gap", w["pubkey"], f"token-account check {t['status']}: {'; '.join(t.get('errors', []))}", who)

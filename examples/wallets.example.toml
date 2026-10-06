@@ -5,6 +5,10 @@ rpc_url_env = "WATCHTOWER_RPC_URL"
 webhook_url_env = "WATCHTOWER_WEBHOOK_URL"
 # state_file = "wallets.state.json"   # default: next to this file
 
+# Squads v4 multisig ACCOUNT addresses (not the vault). Every member, vault 0 and any config
+# authority is watched; members are re-read each cycle and changes alert.
+# squads = ["<multisig address>"]
+
 # Mints whose mint/freeze/permanent-delegate authorities you want watched.
 mints = ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
 

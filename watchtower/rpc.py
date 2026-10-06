@@ -27,6 +27,9 @@ READ_ONLY_METHODS = frozenset(
         "getAccountInfo",
         "getMultipleAccounts",
         "getSlot",
+        # History reads for nonce provenance (who created the account).
+        "getSignaturesForAddress",
+        "getTransaction",
     }
 )
 

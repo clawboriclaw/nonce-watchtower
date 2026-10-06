@@ -14,6 +14,18 @@ JUP_PD = "4Ec7ZxZS6Sbdg5UGSLHbAnM7GQHp2eFd4KYWRexAipQT"
 SPL = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 T22 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 SYS = "11111111111111111111111111111111"
+SQUADS_V4_MS = "51smH7pBDKJDgmVnVks3gMWaPQFfmQ5s4Fc223yHcjuH"  # Exponent Finance upgrade multisig, 3-of-5
+SQUADS_V4_VAULT0 = "2tX7aHkV1r7am6bnTPqQJNBbEkbqDpNWHBYPahSQb9TP"  # its vault 0 = on-chain upgrade authority of Exponent
+SQUADS_V3_MS = "6x3BDkL2n7VjBWxRD95EsbQi2R2E4zxrvcz1VA6pihnK"  # Phoenix upgrade multisig (Squads v3)
+NONCE_CREATE_SIG = "3BxRHV8L9rAE79jTxUdcSYY45wiiYy8p2qnn9nkphKRd6CWEoAL6W6he3r4DwdacJU1pHt14qHceV2Gmr5ySckBp"
+NONCE_USE_SIG = "2qnC1mFfNeMuKG6YuGkwXZgh37tFWQza9NqBFgoLdqyxxu2wiPVbbyHSdGRun92p9mfv7aiyAEoRnHMXP9BsW2m5"  # advances 2HYc...
+NONCE_ACCOUNTS = [
+    "2HYcWwR6ZzVeHfoSB2Z1MtytZwXMbMRpTqC36wJHfJHn",
+    "2bq82QLzZr2u1b7udPyH6x95NvkrR3Zipvs37gT5GE5Q",
+    "82FQGbm5h1DC89F3h8LLzgtLRG4xw2TiMFmUA37G7jZs",
+    "9nnX6BEZ8SURh9WscvxtCWuDhwzaTazkqrs2P6LnxLTn",
+    "HZa8Hb8F4EZJZiqTMn9Vb9SWekpuFLUwnAu2MQM5CxrS",
+]
 
 
 def load(name):
@@ -69,8 +81,19 @@ class FixtureRpc:
                     vals.append(None)
             base["result"]["value"] = vals
             return base
+        if method == "getSignaturesForAddress":
+            if key in NONCE_ACCOUNTS:
+                return load(f"sigs_{key}.json")
+            return {"jsonrpc": "2.0", "id": 1, "result": []}
+        if method == "getTransaction":
+            if key == NONCE_CREATE_SIG:
+                return load("tx_nonce_create_3BxRHV8L.json")
+            if key == NONCE_USE_SIG:
+                return load("tx_nonce_use_2qnC1mFf.json")
+            return {"jsonrpc": "2.0", "id": 1, "result": None}
         if method == "getAccountInfo":
-            table = {USDC: "mint_usdc.json", PYUSD: "mint_pyusd_t22.json", JUP: "program_jup.json", JUP_PD: "programdata_jup.json"}
+            table = {USDC: "mint_usdc.json", PYUSD: "mint_pyusd_t22.json", JUP: "program_jup.json", JUP_PD: "programdata_jup.json",
+                     SQUADS_V4_MS: "squads_v4_exponent.json", SQUADS_V3_MS: "squads_v3_phoenix.json"}
             if key in table:
                 return load(table[key])
             return {"jsonrpc": "2.0", "id": 1, "result": {"context": {"slot": 1}, "value": None}}
@@ -82,7 +105,7 @@ class FixtureRpc:
             for f in params[1].get("filters", []):
                 if "memcmp" in f:
                     return f["memcmp"]["bytes"]
-        if method in ("getTokenAccountsByOwner", "getAccountInfo"):
+        if method in ("getTokenAccountsByOwner", "getAccountInfo", "getSignaturesForAddress", "getTransaction"):
             return params[0]
         return None
 

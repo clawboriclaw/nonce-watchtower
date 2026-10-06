@@ -1,6 +1,7 @@
 """watchtower CLI.
 
-  watchtower scan <pubkey>... [--mint M]... [--program P]... [--rpc URL] [--json]
+  watchtower scan [<pubkey>...] [--squads MULTISIG]... [--mint M]... [--program P]... [--rpc URL] [--json]
+                  [--no-provenance]
   watchtower watch --config wallets.toml [--interval 300] [--webhook URL] [--once] [--json]
 
 Exit codes for `scan` (bit flags): 0 clean and complete; 1 risky findings;
@@ -18,7 +19,7 @@ from . import __version__
 from .alerts import emit_stdout, post_webhook
 from .base58 import is_pubkey
 from .config import ConfigError, load_config, load_state, resolve_rpc, save_state
-from .diff import diff, snapshot
+from .diff import COVERAGE_OK, diff, known_provenance, snapshot, squads_fallback
 from .rpc import DEFAULT_RPC, RPC_ENV_VAR, RpcClient
 from .scan import run_scan
 
@@ -39,6 +40,13 @@ def _client(cli_rpc, env_name=RPC_ENV_VAR):
 
 def print_human(report):
     print(f"nonce-watchtower {report['version']}  rpc={report['rpc']}  at={report['scanned_at']}")
+    for ms in report.get("multisigs", []):
+        print(f"\nsquads multisig {ms['address']}: {ms['status']}" + (f" ({ms.get('error')})" if ms["status"] != "ok" else ""))
+        if ms["status"] == "ok":
+            print(f"  {ms['threshold']}-of-{len(ms['members'])}  time_lock={ms['time_lock']}s  "
+                  f"config_authority={ms.get('config_authority')}  transaction_index={ms['transaction_index']}")
+        for k in ms.get("watched_keys", []):
+            print(f"  watching {k['pubkey']}  {k['role']}")
     cov = report["nonce_coverage"]
     print(f"nonce coverage: {cov['status']}" + (f" ({cov.get('error')})" if cov["status"] != "ok" and cov["status"] != "skipped" else ""))
     for w in report["wallets"]:
@@ -48,6 +56,13 @@ def print_human(report):
         print(f"  durable nonce accounts (authority = this key): {n['status']}, {len(n.get('items', []))} found")
         for it in n.get("items", []):
             print(f"    {it['account']}  nonce={it['nonce']}  {it['version']}")
+            pv = it.get("provenance")
+            if pv and pv["status"] == "ok":
+                print(f"      created {pv['created_at']}  creator={pv['creator'].upper() if pv['creator'] == 'outside' else 'watched'}  "
+                      f"funder={pv['funder']}  initial_authority={pv.get('initial_authority')}  fee_payer={pv['fee_payer']}"
+                      f"{' (OUTSIDE)' if pv.get('fee_payer_outside') else ''}  sig {pv['signature']}")
+            elif pv:
+                print(f"      provenance {pv['status']}: {pv.get('error')}")
         print(f"  token accounts with delegate/close-authority/frozen: {t['status']}, {len(t['items'])} found")
         for it in t["items"]:
             print(f"    {it['account']}  mint={it['mint']}  delegate={it['delegate']}  amount={it['delegated_amount']}  close={it['close_authority']}  state={it['state']}")
@@ -66,15 +81,19 @@ def print_human(report):
 
 
 def cmd_scan(args):
-    bad = [k for k in args.pubkeys + args.mint + args.program if not is_pubkey(k)]
+    bad = [k for k in args.pubkeys + args.mint + args.program + args.squads if not is_pubkey(k)]
     if bad:
         _err(f"invalid public key(s): {', '.join(bad)}")
         return 64
-    if not (args.pubkeys or args.mint or args.program):
+    if not (args.pubkeys or args.mint or args.program or args.squads):
         _err("nothing to scan")
         return 64
     client = _client(args.rpc)
-    report = run_scan(client, [{"pubkey": p, "label": ""} for p in dict.fromkeys(args.pubkeys)], args.mint, args.program)
+    report = run_scan(client, [{"pubkey": p, "label": ""} for p in dict.fromkeys(args.pubkeys)], args.mint, args.program,
+                      squads=args.squads, provenance=not args.no_provenance)
+    for ms in report["multisigs"]:
+        if ms["status"] != "ok":
+            _err(f"Squads multisig {ms['address']}: {ms['status'].upper()}: {ms.get('error')}")
     if args.json:
         json.dump(report, sys.stdout, indent=1)
         print()
@@ -92,15 +111,16 @@ def watch_cycle(cfg, client, state_path, webhook, as_json=False, out=None):
     """One scan -> diff -> alert -> persist cycle. Returns the alerts."""
     prev = load_state(state_path)
     prev_snap = prev["snapshot"] if prev else None
-    report = run_scan(client, cfg["wallets"], cfg["mints"], cfg["programs"])
+    report = run_scan(client, cfg["wallets"], cfg["mints"], cfg["programs"], squads=cfg.get("squads", []),
+                      known_provenance=known_provenance(prev_snap), squads_fallback=squads_fallback(prev_snap))
     snap = snapshot(report, prev_snap)
-    labels = {w["pubkey"]: w["label"] for w in cfg["wallets"] if w["label"]}
+    labels = {w["pubkey"]: w["label"] for w in report["wallets"] if w["label"]}
     alerts = diff(prev_snap, snap, labels)
     stamp = report["scanned_at"]
     for a in alerts:
         a["at"] = stamp
     emit_stdout(alerts, as_json=as_json, stream=out)
-    blind = [k for k, v in snap["coverage"].items() if v not in ("ok", "missing", "not_a_mint", "not_a_program")]
+    blind = [k for k, v in snap["coverage"].items() if v not in COVERAGE_OK]
     _err(f"cycle {stamp}: {len(alerts)} alert(s), {len(snap['coverage']) - len(blind)}/{len(snap['coverage'])} checks running")
     if blind:
         _err(f"{len(blind)} check(s) not running this cycle (changes there are NOT detected): {', '.join(blind)}")
@@ -161,6 +181,10 @@ def build_parser():
 
     s = sub.add_parser("scan", help="one-off read-only scan")
     s.add_argument("pubkeys", nargs="*", help="wallet / multisig-member public keys")
+    s.add_argument("--squads", action="append", default=[], metavar="MULTISIG",
+                   help="Squads v4 multisig account: watch all its members, vault 0 and config authority (repeatable)")
+    s.add_argument("--no-provenance", action="store_true",
+                   help="skip the transaction-history lookup of who created each nonce account")
     s.add_argument("--mint", action="append", default=[], help="mint to report authorities for (repeatable)")
     s.add_argument("--program", action="append", default=[], help="program id to report upgrade authority for (repeatable)")
     s.add_argument("--rpc", help=f"RPC URL (default: ${RPC_ENV_VAR} or {DEFAULT_RPC})")
