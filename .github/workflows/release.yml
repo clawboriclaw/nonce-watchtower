@@ -1,0 +1,53 @@
+# Build, test and publish to PyPI via Trusted Publishing (OIDC): no API token is stored anywhere.
+# Runs on a version tag (v*) or by hand. The PyPI publisher is bound to this repo, this file and the
+# "pypi" environment.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Tests
+        run: |
+          python -m pip install --upgrade "setuptools>=77" build twine
+          python -m unittest discover -t . -s tests
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Check metadata
+        run: python -m twine check --strict dist/*
+      - name: Tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(python -c "import watchtower; print(watchtower.__version__)")
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package v$v"; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
