@@ -1,0 +1,166 @@
+{
+ "id": 1,
+ "jsonrpc": "2.0",
+ "result": {
+  "blockTime": 1775059518,
+  "meta": {
+   "computeUnitsConsumed": 49133,
+   "costUnits": 51769,
+   "err": null,
+   "fee": 5000,
+   "innerInstructions": [
+    {
+     "index": 1,
+     "instructions": [
+      {
+       "accounts": [
+        0,
+        2
+       ],
+       "data": "11117TXo5FP4bXmEJRsWejhkmg4A6ERoEcQAzQM8LJcHeoiaFiXF6uTCbqRgGmYrFSQdks",
+       "programIdIndex": 5,
+       "stackHeight": 2
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "instructions": [
+      {
+       "accounts": [
+        0,
+        4
+       ],
+       "data": "11112B6R242kTmdJWEUkVTHoaFvym1QC1q224Vwbe3cyd1qVQkuCC6q1Cs6bm5dDVaUTAo",
+       "programIdIndex": 5,
+       "stackHeight": 2
+      }
+     ]
+    }
+   ],
+   "loadedAddresses": {
+    "readonly": [],
+    "writable": []
+   },
+   "logMessages": [
+    "Program 11111111111111111111111111111111 invoke [1]",
+    "Program 11111111111111111111111111111111 success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf invoke [1]",
+    "Program log: Instruction: VaultTransactionCreate",
+    "Program 11111111111111111111111111111111 invoke [2]",
+    "Program 11111111111111111111111111111111 success",
+    "Program log: transaction index: 7",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf consumed 25244 of 602850 compute units",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf invoke [1]",
+    "Program log: Instruction: ProposalCreate",
+    "Program 11111111111111111111111111111111 invoke [2]",
+    "Program 11111111111111111111111111111111 success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf consumed 14148 of 577606 compute units",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf invoke [1]",
+    "Program log: Instruction: ProposalApprove",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf consumed 9591 of 563458 compute units",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf success"
+   ],
+   "postBalances": [
+    335632147,
+    2958000,
+    2623920,
+    1447680,
+    4718880,
+    1,
+    2141440,
+    42706560
+   ],
+   "postTokenBalances": [],
+   "preBalances": [
+    342979947,
+    2958000,
+    0,
+    1447680,
+    0,
+    1,
+    2141440,
+    42706560
+   ],
+   "preTokenBalances": [],
+   "rewards": [],
+   "status": {
+    "Ok": null
+   }
+  },
+  "slot": 410344005,
+  "transaction": {
+   "message": {
+    "accountKeys": [
+     "39JyWrdbVdRqjzw9yyEjxNtTbTKcTPLdtdCgbz7C7Aq8",
+     "2LW6PSEjp81xSEttWwXDB6Etb1eKdhYPbFEojYbyhx88",
+     "2QmMUBZYv2Ssm6ED73Gapt8cgn9u1HQbPaJtfYdDDAwc",
+     "7s7s6saC5LHZoLyBXLM3pCjpWaA7meyQdP8NiH9ktAeC",
+     "J1w1U5BB9W4Tnf2NhrcnTmV5t6iZugXSkujYKadwxti8",
+     "11111111111111111111111111111111",
+     "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf",
+     "SysvarRecentB1ockHashes11111111111111111111"
+    ],
+    "header": {
+     "numReadonlySignedAccounts": 0,
+     "numReadonlyUnsignedAccounts": 3,
+     "numRequiredSignatures": 1
+    },
+    "instructions": [
+     {
+      "accounts": [
+       3,
+       7,
+       0
+      ],
+      "data": "6vx8P",
+      "programIdIndex": 5,
+      "stackHeight": 1
+     },
+     {
+      "accounts": [
+       1,
+       2,
+       0,
+       0,
+       5
+      ],
+      "data": "3D2K8UDavGr7baSVArjiAmpgZUdcwjRd4rA5q7c89MstKYqsSt4JXxeoiuu8NPUuy1yhypfsQtyDDUnx1AiKprXiB3oYa75x162x5GoUowLdBwTwXHRcX6iMRZsoTbd3ASYj8ShxiPtTARjMSSgvH5oRmYzBMfcrrZJJ2vV5pYAYwW59wiZJYgVFa7ShfbPKBFV1SUFN6sMUsDPuhz8d94P7LCnvs6X",
+      "programIdIndex": 6,
+      "stackHeight": 1
+     },
+     {
+      "accounts": [
+       1,
+       4,
+       0,
+       0,
+       5
+      ],
+      "data": "3535YithDR634zt77pd1KBVq",
+      "programIdIndex": 6,
+      "stackHeight": 1
+     },
+     {
+      "accounts": [
+       1,
+       0,
+       4
+      ],
+      "data": "2qRHAEUKPa4CF",
+      "programIdIndex": 6,
+      "stackHeight": 1
+     }
+    ],
+    "recentBlockhash": "Hq3V1PfmMPxJui7ps8irzv9X1XafpsFSQpa85BWu4McJ"
+   },
+   "signatures": [
+    "2HvMSgDEfKhNryYZKhjowrBY55rUx5MWtcWkG9hqxZCFBaTiahPwfynP1dxBSRk9s5UTVc8LFeS4Btvkm9pc2C4H"
+   ]
+  },
+  "transactionIndex": 1118,
+  "version": "legacy"
+ }
+}

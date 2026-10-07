@@ -1,0 +1,147 @@
+{
+ "id": 1,
+ "jsonrpc": "2.0",
+ "result": {
+  "blockTime": 1775059519,
+  "meta": {
+   "computeUnitsConsumed": 69273,
+   "costUnits": 73490,
+   "err": null,
+   "fee": 5000,
+   "innerInstructions": [
+    {
+     "index": 2,
+     "instructions": [
+      {
+       "accounts": [
+        2,
+        1
+       ],
+       "data": "92xxaYiShjsmLGJqsyPJtMWDcXxXyHLPntKuNv1qpc7vRWWHnYqM1Sp",
+       "programIdIndex": 8,
+       "stackHeight": 2
+      }
+     ]
+    }
+   ],
+   "loadedAddresses": {
+    "readonly": [],
+    "writable": []
+   },
+   "logMessages": [
+    "Program 11111111111111111111111111111111 invoke [1]",
+    "Program 11111111111111111111111111111111 success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf invoke [1]",
+    "Program log: Instruction: ProposalApprove",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf consumed 10353 of 402850 compute units",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf invoke [1]",
+    "Program log: Instruction: VaultTransactionExecute",
+    "Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH invoke [2]",
+    "Program log: Instruction: UpdateAdmin",
+    "Program log: admin: AiLGdNitMjv8n5HMS7HAdV2kaeJZZFd4jdfn5xp1PKrW -> H7PiGqqUaanBovwKgEtreJbKmQe6dbq6VTrw6guy7ZgL",
+    "Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH consumed 36950 of 371938 compute units",
+    "Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH success",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf consumed 58770 of 392497 compute units",
+    "Program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf success"
+   ],
+   "postBalances": [
+    16321033,
+    7795213,
+    51000000,
+    1447680,
+    4718880,
+    1,
+    2958000,
+    2623920,
+    49151453,
+    2141440,
+    42706560
+   ],
+   "postTokenBalances": [],
+   "preBalances": [
+    16326033,
+    7795213,
+    51000000,
+    1447680,
+    4718880,
+    1,
+    2958000,
+    2623920,
+    49151453,
+    2141440,
+    42706560
+   ],
+   "preTokenBalances": [],
+   "rewards": [],
+   "status": {
+    "Ok": null
+   }
+  },
+  "slot": 410344009,
+  "transaction": {
+   "message": {
+    "accountKeys": [
+     "6UJbu9ut5VAsFYQFgPEa5xPfoyF5bB5oi4EknFPvu924",
+     "5zpq7DvB6UdFFvpmBPspGPNfUGoBRRCE2HHg5u3gxcsN",
+     "AiLGdNitMjv8n5HMS7HAdV2kaeJZZFd4jdfn5xp1PKrW",
+     "EmYEryTDXtuVCxrjNqJXbiwr4hfiJajd4g5P58vvhQnc",
+     "J1w1U5BB9W4Tnf2NhrcnTmV5t6iZugXSkujYKadwxti8",
+     "11111111111111111111111111111111",
+     "2LW6PSEjp81xSEttWwXDB6Etb1eKdhYPbFEojYbyhx88",
+     "2QmMUBZYv2Ssm6ED73Gapt8cgn9u1HQbPaJtfYdDDAwc",
+     "dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH",
+     "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf",
+     "SysvarRecentB1ockHashes11111111111111111111"
+    ],
+    "header": {
+     "numReadonlySignedAccounts": 0,
+     "numReadonlyUnsignedAccounts": 6,
+     "numRequiredSignatures": 1
+    },
+    "instructions": [
+     {
+      "accounts": [
+       3,
+       10,
+       0
+      ],
+      "data": "6vx8P",
+      "programIdIndex": 5,
+      "stackHeight": 1
+     },
+     {
+      "accounts": [
+       6,
+       0,
+       4
+      ],
+      "data": "2qRHAEUKPa4CF",
+      "programIdIndex": 9,
+      "stackHeight": 1
+     },
+     {
+      "accounts": [
+       6,
+       4,
+       7,
+       0,
+       2,
+       1,
+       8
+      ],
+      "data": "ZTNTtVtnvbC",
+      "programIdIndex": 9,
+      "stackHeight": 1
+     }
+    ],
+    "recentBlockhash": "EsYUk1Pixbe5MDE85JMtSZhV5mGKDWuwBW4UGHtx5NF9"
+   },
+   "signatures": [
+    "4BKBmAJn6TdsENij7CsVbyMVLJU1tX27nfrMM1zgKv1bs2KJy6Am2NqdA3nJm4g9C6eC64UAf5sNs974ygB9RsN1"
+   ]
+  },
+  "transactionIndex": 1238,
+  "version": "legacy"
+ }
+}

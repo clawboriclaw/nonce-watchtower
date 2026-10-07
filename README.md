@@ -46,6 +46,39 @@ The nonce accounts sat on-chain, in public, for about nine days before they were
 Any signer could have seen them with one query. This tool runs that query on a schedule,
 along with the related standing-approval checks.
 
+### Replay: the Drift timeline
+
+`tests/test_drift_replay.py` runs the real `watch` cycle (scan, snapshot, diff, provenance)
+against the recorded mainnet history of the two nonce accounts the attack used, watching the
+two keys that signed the attack transactions. The fixtures show both were members of the Squads
+multisig `2LW6PSEj…` whose vault held Drift's admin (its Security Council, per public reports):
+each approved a proposal on it, and the second executed it, running Drift's `UpdateAdmin`. The
+test steps the chain through four points in time:
+
+| When (UTC) | Slot | On-chain event | What the tool reports |
+|---|---|---|---|
+| before 2026-03-24 01:22 | 408444055 | nothing staged on either signer | no nonce alerts |
+| 2026-03-24 01:22:06 | 408444056 | nonce `7s7s6saC…` created with authority signer `39JyWrdb…`, rent paid by `FMJnBkVp…` (not a council key) | `new_nonce_account` (critical) + `nonce_outside_creator` (high) naming `FMJnBkVp…` |
+| 2026-03-31 02:35:49 | 409999217 | same funder creates nonce `EmYEryTD…` with authority signer `6UJbu9ut…` | the same two alerts for that nonce and signer |
+| 2026-04-01 16:05:18–19 | 410344005 / 410344009 | both nonces advanced by the attack transactions `2HvMSgDE…` and `4BKBmAJn…`, which approve and execute the admin transfer | `nonce_advanced` (high) for both |
+
+The first critical alert comes **8 days 14 h 43 min before the exploit**, measured from the
+nonce's creation to the first attack transaction; a watcher running then would raise it within
+one scan interval of creation. The replay presents the RPC as current at each checkpoint, so it
+shows the alert logic on fresh data, not behaviour against a slow or lying node (other tests
+cover that). The test also checks
+the opposite cases: with the funder in the watched set there is no outside-creator alert, with
+no transaction history the creator is reported UNKNOWN (not cleared), and keys that are not
+signers see nothing.
+
+Note: some public write-ups list `39JyWrdb…` and `6UJbu9ut…` as nonce accounts. On-chain they
+are the signer keys (the nonce authorities); the nonce accounts are `7s7s6saC…` and `EmYEryTD…`.
+
+Run it offline with `python -m unittest tests.test_drift_replay -v`. The fixtures are public RPC
+responses recorded by `tools/record_drift.py` and cross-checked against a second provider with
+`tools/verify_drift.py`; `tests/fixtures/drift/README.md` lists what is recorded verbatim, what
+the test rebuilds from it, and how it was verified.
+
 ### What it detects
 
 | Signal | Why it matters | Alert |
