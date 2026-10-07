@@ -1,0 +1,69 @@
+# nonce-watchtower streaming mode as a systemd service.
+#
+# Install (as root):
+#   python3 -m venv /opt/nonce-watchtower && /opt/nonce-watchtower/bin/pip install nonce-watchtower
+#   install -d -m 0750 /etc/nonce-watchtower
+#   install -m 0644 wallets.toml /etc/nonce-watchtower/wallets.toml          # public keys only
+#   install -m 0600 watchtower.env.example /etc/nonce-watchtower/watchtower.env   # then fill in the secrets
+#   cp nonce-watchtower-stream.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now nonce-watchtower-stream
+#   /opt/nonce-watchtower/bin/watchtower alert-test --config /etc/nonce-watchtower/wallets.toml  # with the env loaded
+#   journalctl -u nonce-watchtower-stream -f
+#
+# The tool is read-only: it needs network access to your RPC/PubSub endpoint and to the
+# alert APIs, nothing else. It never needs or accepts a private key.
+
+[Unit]
+Description=nonce-watchtower: read-only live watch on Solana durable nonces, delegates and authorities
+Documentation=https://github.com/clawboriclaw/nonce-watchtower
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Secrets (RPC/WS URL with API key, Telegram bot token, Discord webhook) live only in this 0600 file.
+EnvironmentFile=/etc/nonce-watchtower/watchtower.env
+ExecStart=/opt/nonce-watchtower/bin/watchtower stream \
+    --config /etc/nonce-watchtower/wallets.toml \
+    --state /var/lib/nonce-watchtower/wallets.state.json \
+    --resync-interval 300
+# The watcher reconnects by itself; this covers crashes. A restart is reported as a coverage gap.
+Restart=always
+RestartSec=10
+# SIGTERM ends it cleanly; the state file is written atomically either way.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Unprivileged, throwaway user; state survives in /var/lib/nonce-watchtower (mode 0700).
+DynamicUser=yes
+StateDirectory=nonce-watchtower
+StateDirectoryMode=0700
+UMask=0077
+
+# Hardening: no writes outside the state directory, no new privileges, IP networking only.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

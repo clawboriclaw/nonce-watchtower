@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 
 from . import __version__
+from .redact import register_url, scrub, scrub_obj
 from .rpc import redact_url, validate_http_url
 
 SEV_MARK = {"critical": "CRIT", "high": "HIGH", "warn": "WARN", "medium": "MED ", "info": "info"}
@@ -27,7 +28,7 @@ def format_alert(a):
 def emit_stdout(alerts, as_json=False, stream=None):
     stream = stream or sys.stdout
     for a in alerts:
-        stream.write((json.dumps(a, sort_keys=True) if as_json else format_alert(a)) + "\n")
+        stream.write(scrub(json.dumps(a, sort_keys=True) if as_json else format_alert(a)) + "\n")
     stream.flush()
 
 
@@ -44,11 +45,12 @@ def post_webhook(url, alerts, timeout=10.0, opener=None):
     """Returns (ok: bool, message: str). Never raises, never echoes the URL path/query."""
     if not alerts:
         return True, "nothing to send"
+    register_url(url)
     try:
         validate_http_url(url, "webhook URL")
     except ValueError as e:
         return False, str(e)
-    body = json.dumps(webhook_payload(alerts)).encode()
+    body = json.dumps(scrub_obj(webhook_payload(alerts))).encode()
     req = urllib.request.Request(
         url, data=body, method="POST",
         headers={"Content-Type": "application/json", "User-Agent": f"nonce-watchtower/{__version__}"},

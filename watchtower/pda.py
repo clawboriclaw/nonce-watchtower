@@ -22,7 +22,7 @@ MAX_SEEDS = 16
 def is_on_curve(raw: bytes) -> bool:
     if len(raw) != 32:
         raise ValueError("expected 32 bytes")
-    # Non-canonical y >= p (K3 review): REDUCED mod p, not rejected. This matches curve25519-dalek, which Solana's
+    # Non-canonical y >= p (independent review): REDUCED mod p, not rejected. This matches curve25519-dalek, which Solana's
     # bytes_are_curve_point calls: decompress -> FieldElement::from_bytes "does not check that the input used the
     # canonical representative ... it will happily decode 2^255 - 18 to 1" (curve25519-dalek @ 97a020d1,
     # backend/serial/u64/field.rs). Only 19 of 2^255 encodings are non-canonical (~2^-250 per hash) anyway.

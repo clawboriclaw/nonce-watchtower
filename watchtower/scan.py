@@ -25,7 +25,8 @@ from .decode import (
     decode_programdata_header,
 )
 from .provenance import classify, nonce_provenance
-from .rpc import RPC_ENV_VAR, RpcError, RpcUnavailable
+from .redact import scrub
+from .rpc import DEFAULT_MAX_BLOCK_AGE, DEFAULT_MAX_SLOT_LAG, RPC_ENV_VAR, FreshnessGuard, RpcError, RpcStale, RpcUnavailable
 from .squads import resolve_multisig, watched_keys
 
 GPA_ADVICE = (
@@ -46,7 +47,7 @@ def _now():
 
 
 def _err(exc):
-    return {"status": "unavailable", "error": str(exc)}
+    return {"status": "unavailable", "error": scrub(str(exc))}
 
 
 def nonce_filters(authority):
@@ -94,6 +95,8 @@ def scan_nonces(client, authority):
         )
     except (RpcError, RpcUnavailable) as e:
         out = _err(e)
+        if isinstance(e, RpcStale):
+            out["status"] = "unverified"  # the endpoint answered, but not provably from a current index
         out["advice"] = GPA_ADVICE
         return out
     if not isinstance(res, list):
@@ -117,7 +120,7 @@ def scan_nonces(client, authority):
     out = {"status": "ok", "items": items}
     if rejected:
         # The endpoint answered our query with accounts that fail local verification. Its answer
-        # cannot be trusted, so "nothing found" is not "clean" (independent review 2026-10-06).
+        # cannot be trusted, so "nothing found" is not "clean" (independent review 2026-10-06, finding 1).
         out.update(status="unverified", rejected_entries=rejected,
                    error=f"{rejected} returned account(s) failed local verification; endpoint result untrusted")
     return out
@@ -365,7 +368,8 @@ def add_provenance(client, report, known=None):
 
 
 def run_scan(client, wallets, mints=(), programs=(), squads=(), provenance=True, known_provenance=None,
-             squads_fallback=None):
+             squads_fallback=None, max_slot_lag=DEFAULT_MAX_SLOT_LAG, max_block_age=DEFAULT_MAX_BLOCK_AGE,
+             reference_client=None):
     """wallets: list of {"pubkey", "label"}; squads: Squads v4 multisig addresses whose members are added
     to the watched keys. Returns a JSON-serialisable report."""
     wallets = [{"pubkey": w["pubkey"], "label": w.get("label") or ""} for w in wallets]
@@ -377,6 +381,8 @@ def run_scan(client, wallets, mints=(), programs=(), squads=(), provenance=True,
         require_pubkey(p, "program id")
     for a in squads:
         require_pubkey(a, "Squads multisig address")
+    if not isinstance(client, FreshnessGuard):
+        client = FreshnessGuard(client, max_slot_lag, max_block_age, reference_client)
     multisigs = expand_squads(client, wallets, list(dict.fromkeys(squads)), squads_fallback)
 
     report = {
@@ -571,3 +577,34 @@ def findings(report):
             f"upgrade_authority={p['upgrade_authority']} last_deploy_slot={p.get('last_deploy_slot')}"
             + (f" held_by_watched={p['held_by_watched']}" if p["held_by_watched"] else ""))
     return out
+
+
+def confirm_missing_nonces(client, previous, snap):
+    """A nonce account that was known, and is missing from a scan whose nonce check said "ok", is re-read directly.
+
+    getProgramAccounts can answer from a stale or partial index while the canary still passes. If the account
+    still exists as a nonce with the same watched authority, the scan answer was incomplete: the account is
+    carried forward and that wallet's nonce check becomes "unverified" (a coverage gap, never clean). If the
+    direct read fails, the same applies: an unconfirmed disappearance is not a disappearance.
+    Returns the list of accounts that were carried forward. Mutates `snap`.
+    """
+    carried = []
+    for acct, old in sorted(((previous or {}).get("nonces") or {}).items()):
+        wallet = old.get("wallet")
+        if acct in snap["nonces"] or snap["coverage"].get(f"nonces:{wallet}") != "ok":
+            continue
+        try:
+            res = client.call("getAccountInfo", [acct, {"encoding": "base64"}])
+            value = (res or {}).get("value") if isinstance(res, dict) else None
+            still_ours = False
+            if value:
+                dec = decode_nonce(account_bytes(value)) if value.get("owner") == SYSTEM_PROGRAM else None
+                still_ours = bool(dec) and dec["authority"] == old.get("authority")
+            confirmed_gone = not still_ours
+        except (RpcError, RpcUnavailable, ValueError, TypeError):
+            confirmed_gone = False
+        if not confirmed_gone:
+            snap["nonces"][acct] = old
+            snap["coverage"][f"nonces:{wallet}"] = "unverified"
+            carried.append(acct)
+    return carried

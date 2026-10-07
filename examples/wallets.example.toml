@@ -3,6 +3,12 @@
 # TOML rule: top-level settings must come BEFORE the first [[wallets]] block.
 rpc_url_env = "WATCHTOWER_RPC_URL"
 webhook_url_env = "WATCHTOWER_WEBHOOK_URL"
+# ws_url_env = "WATCHTOWER_WS_URL"                          # PubSub URL for `stream` (default: derived from the RPC URL)
+# telegram_bot_token_env = "WATCHTOWER_TELEGRAM_BOT_TOKEN"
+# telegram_chat_id_env = "WATCHTOWER_TELEGRAM_CHAT_ID"      # or: telegram_chat_id = -1001234567890 (not a secret)
+# telegram_thread_id_env = "WATCHTOWER_TELEGRAM_THREAD_ID"  # optional forum topic id
+# discord_webhook_url_env = "WATCHTOWER_DISCORD_WEBHOOK_URL"
+# alert_dedup_seconds = 1800   # an identical alert is not re-sent to a chat sink within this window (stdout gets all)
 # state_file = "wallets.state.json"   # default: next to this file
 
 # Squads v4 multisig ACCOUNT addresses (not the vault). Every member, vault 0 and any config

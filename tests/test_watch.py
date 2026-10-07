@@ -145,6 +145,49 @@ class WatchCycleTests(unittest.TestCase):
                 load_config(p)
 
 
+class VanishedNonceTests(unittest.TestCase):
+    """Round-2 finding 4: a nonce missing from an otherwise-ok scan is confirmed before it counts as gone."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        p = os.path.join(self.dir, "wallets.toml")
+        with open(p, "w") as f:
+            f.write(f'[[wallets]]\npubkey = "{NONCE_AUTH}"\n')
+        self.cfg = load_config(p)
+        watch_cycle(self.cfg, RpcClient(transport=FixtureRpc()), self.cfg["state_file"], None, out=io.StringIO())
+        g = load("gpa_nonce_real.json")
+        self.missing = g["result"][0]
+        g["result"] = g["result"][1:]
+        self.partial_gpa = g
+
+    def cycle(self, account_info):
+        rpc = FixtureRpc(overrides={("getProgramAccounts", NONCE_AUTH): self.partial_gpa,
+                                    ("getAccountInfo", self.missing["pubkey"]): account_info})
+        res = {}
+        with mock.patch("sys.stderr", io.StringIO()):
+            a = watch_cycle(self.cfg, RpcClient(transport=rpc), self.cfg["state_file"], None, out=io.StringIO(), result=res)
+        return a, res["snap"]
+
+    def test_still_existing_account_is_kept_and_scan_marked_unverified(self):
+        a, snap = self.cycle({"jsonrpc": "2.0", "id": 1, "result": {"context": {"slot": 1}, "value": self.missing["account"]}})
+        self.assertIn(self.missing["pubkey"], snap["nonces"])
+        self.assertEqual(snap["coverage"][f"nonces:{NONCE_AUTH}"], "unverified")
+        self.assertNotIn("nonce_account_gone", kinds(a))
+        self.assertIn("coverage_lost", kinds(a))
+
+    def test_failed_direct_read_is_not_a_disappearance(self):
+        from watchtower.rpc import RpcUnavailable
+        a, snap = self.cycle(RpcUnavailable("getAccountInfo", "timeout"))
+        self.assertIn(self.missing["pubkey"], snap["nonces"])
+        self.assertEqual(snap["coverage"][f"nonces:{NONCE_AUTH}"], "unverified")
+
+    def test_confirmed_gone_is_gone(self):
+        a, snap = self.cycle({"jsonrpc": "2.0", "id": 1, "result": {"context": {"slot": 1}, "value": None}})
+        self.assertNotIn(self.missing["pubkey"], snap["nonces"])
+        self.assertEqual(snap["coverage"][f"nonces:{NONCE_AUTH}"], "ok")
+        self.assertIn("nonce_account_gone", kinds(a))
+
+
 class WebhookTests(unittest.TestCase):
     def test_payload_and_https_only(self):
         ok, msg = alerts_mod.post_webhook("http://hooks.example.com/secret", [{"severity": "high", "kind": "k", "subject": "s", "detail": "d"}])

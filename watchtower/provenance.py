@@ -86,7 +86,7 @@ def classify(pv, watched):
 
     The FUNDER (who paid the rent, i.e. who actually created the account) and the INITIAL nonce authority are
     decisive: either one outside the watched keys -> creator "outside" (high). A fee payer outside on its own
-    is a sponsored/relayed fee: reported separately (medium), not as an outside creator. (Ava/K3 review.)
+    is a sponsored/relayed fee: reported separately (medium), not as an outside creator. (independent review.)
     """
     fee_payer, funder, init_auth = pv.get("fee_payer"), pv.get("funder"), pv.get("initial_authority")
     outside = sorted({k for k in (funder, init_auth) if k and k not in watched})

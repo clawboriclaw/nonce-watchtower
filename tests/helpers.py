@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import time
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -40,14 +41,31 @@ def empty_tabo():
 class FixtureRpc:
     """Routes read-only calls to recorded responses. `overrides[(method, key)]` wins."""
 
-    def __init__(self, overrides=None, gpa_refused=False, gpa_silent_empty=False):
+    def __init__(self, overrides=None, gpa_refused=False, gpa_silent_empty=False, slot=1, gpa_slot=1, gpa_context=True,
+                 block_age=5.0):
         self.overrides = overrides or {}
         self.gpa_refused = gpa_refused
         self.gpa_silent_empty = gpa_silent_empty
+        self.slot = slot          # what getSlot answers (the endpoint's finalized slot)
+        self.gpa_slot = gpa_slot  # context slot of getProgramAccounts answers (lower = a lagging index)
+        self.gpa_context = gpa_context  # False: an endpoint that ignores withContext
+        self.block_age = block_age      # seconds behind wall clock that getBlockTime reports (large = node behind)
         self.calls = []
 
     def __call__(self, method, params):
         self.calls.append((method, params))
+        if method == "getSlot" and ("getSlot", None) not in self.overrides:
+            return {"jsonrpc": "2.0", "id": 1, "result": self.slot() if callable(self.slot) else self.slot}
+        if method == "getBlockTime" and ("getBlockTime", None) not in self.overrides:
+            return {"jsonrpc": "2.0", "id": 1, "result": int(time.time() - self.block_age)}
+        resp = self._route(method, params)
+        # Real nodes wrap getProgramAccounts in {context, value} when asked withContext.
+        if (method == "getProgramAccounts" and isinstance(resp, dict) and isinstance(resp.get("result"), list)
+                and (params[1] or {}).get("withContext") and self.gpa_context):
+            resp = dict(resp, result={"context": {"slot": self.gpa_slot}, "value": resp["result"]})
+        return resp
+
+    def _route(self, method, params):
         key = self._key(method, params)
         if (method, key) in self.overrides:
             v = self.overrides[(method, key)]

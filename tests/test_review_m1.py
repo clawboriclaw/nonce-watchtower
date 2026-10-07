@@ -1,4 +1,4 @@
-"""Regression tests for the Milestone 1 review (Ava FIX-FIRST + K3 GO-with-fixes, 2026-10-06).
+"""Regression tests for the Milestone 1 review (two independent reviews, 2026-10-06).
 Each test fails on 00c767b."""
 import unittest
 
@@ -40,7 +40,7 @@ def _sys_tag(ix):
 
 
 class FunderUnknownTests(unittest.TestCase):
-    """Ava #1 (blocking): only InitializeNonceAccount visible -> funder unknown -> unverified, never ok/watched."""
+    """Review A #1 (blocking): only InitializeNonceAccount visible -> funder unknown -> unverified, never ok/watched."""
 
     def test_init_only_is_unverified(self):
         def drop_creates(tx):
@@ -82,7 +82,7 @@ def watched_funder_outside_fee_payer(tx):
 
 
 class CreatorClassificationTests(unittest.TestCase):
-    """Ava #2 / K3 #3: funder or initial authority decides; an outside fee payer alone is a separate MEDIUM."""
+    """Review A #2 / review B #3: funder or initial authority decides; an outside fee payer alone is a separate MEDIUM."""
 
     def test_outside_fee_payer_only_is_medium_not_high(self):
         rep = scan(tx_with(watched_funder_outside_fee_payer))
@@ -141,7 +141,7 @@ def lock_report(**tok):
 
 
 class WatchNftLockTests(unittest.TestCase):
-    """K3 #1: watch must grade a verified frozen 1-of-1 lock like scan (info/medium), and an unverified one HIGH."""
+    """Review B #1: watch must grade a verified frozen 1-of-1 lock like scan (info/medium), and an unverified one HIGH."""
 
     def _delegate_alerts(self, old, new):
         return [(a["severity"], a["kind"]) for a in diff(old, new) if "delegate" in a["kind"] or "lock" in a["kind"]]
@@ -164,7 +164,7 @@ class WatchNftLockTests(unittest.TestCase):
 
 
 class ProvenanceCarryForwardTests(unittest.TestCase):
-    """K3 #2: an outage must not erase a settled provenance, so nonce_outside_creator does not re-fire."""
+    """Review B #2: an outage must not erase a settled provenance, so nonce_outside_creator does not re-fire."""
 
     def test_outside_creator_fires_once_across_an_outage(self):
         def outside_payer(tx):
@@ -182,7 +182,7 @@ class ProvenanceCarryForwardTests(unittest.TestCase):
 
 
 class PdaCanonicalityTests(unittest.TestCase):
-    """K3 #4 (comment fix): y >= p is reduced, as curve25519-dalek's FieldElement::from_bytes does."""
+    """Review B #4 (comment fix): y >= p is reduced, as curve25519-dalek's FieldElement::from_bytes does."""
 
     def test_non_canonical_y_is_reduced(self):
         y = (2**255 - 18).to_bytes(32, "little")  # = p + 1, which dalek decodes to 1 -> the point (0, 1)

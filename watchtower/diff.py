@@ -97,7 +97,7 @@ def snapshot(report, previous=None):
                 "delegated_amount": it["delegated_amount"],
                 "close_authority": it["close_authority"],
                 "state": it["state"],
-                # NFT-lock classification inputs, so watch mode grades a lock exactly as scan does (K3 review).
+                # NFT-lock classification inputs, so watch mode grades a lock exactly as scan does (independent review).
                 "amount": it.get("amount"),
                 "decimals": it.get("decimals"),
                 "mint_checked": it.get("mint_checked"),
@@ -287,7 +287,15 @@ def diff(old, new, labels=None):
         ok_now = st in COVERAGE_OK
         ok_before = before is None or before in COVERAGE_OK
         if not ok_now and (ok_before or baseline):
-            add("warn", "coverage_lost", key, f"check is {st}; last known values are being held, changes are NOT being detected", None, before, st)
+            if st == "scan_failed":
+                detail = ("the watcher's scan/alert/state cycle failed (see the scan_failed alert): this window is a "
+                          "coverage gap until a scan succeeds")
+            elif key.startswith("stream"):
+                detail = (f"live stream is {st}: only the periodic scan is running, so a change is seen late and one that "
+                          "reverts between scans is missed")
+            else:
+                detail = f"check is {st}; last known values are being held, changes are NOT being detected"
+            add("warn", "coverage_lost", key, detail, None, before, st)
         elif ok_now and before is not None and not ok_before:
             add("info", "coverage_restored", key, "check is running again", None, before, st)
     order = {"critical": 0, "high": 1, "warn": 2, "medium": 3, "info": 4}
