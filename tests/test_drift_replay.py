@@ -13,6 +13,7 @@ verbatim and what is rebuilt from it is spelled out in tests/fixtures/drift/READ
 
 import base64
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -20,7 +21,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 
-from watchtower.base58 import b58decode
+from watchtower.base58 import b58decode, b58encode as _b58encode
 from watchtower.cli import watch_cycle
 from watchtower.rpc import RpcClient
 
@@ -33,6 +34,7 @@ MEMBER_B = "6UJbu9ut5VAsFYQFgPEa5xPfoyF5bB5oi4EknFPvu924"  # member of COUNCIL_M
 COUNCIL_MS = "2LW6PSEjp81xSEttWwXDB6Etb1eKdhYPbFEojYbyhx88"  # Squads v4 multisig whose vault held Drift's admin
 DRIFT_STATE = "5zpq7DvB6UdFFvpmBPspGPNfUGoBRRCE2HHg5u3gxcsN"  # Drift program state account (admin field)
 SQUADS_V4 = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"
+DRIFT_PROGRAM = "dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH"
 SYSTEM_ADVANCE_NONCE = 4  # System instruction tag
 NONCE_A = "7s7s6saC5LHZoLyBXLM3pCjpWaA7meyQdP8NiH9ktAeC"   # authority MEMBER_A
 NONCE_B = "EmYEryTDXtuVCxrjNqJXbiwr4hfiJajd4g5P58vvhQnc"   # authority MEMBER_B
@@ -49,6 +51,39 @@ def _load(name):
 
 def _tx(sig):
     return _load(f"tx_{sig[:8]}.json")["result"]
+
+
+def anchor_disc(name):
+    """Anchor instruction discriminator: first 8 bytes of sha256("global:<name>")."""
+    return hashlib.sha256(f"global:{name}".encode()).digest()[:8]
+
+
+NAMES = ("vault_transaction_create", "proposal_create", "proposal_approve", "vault_transaction_execute", "update_admin")
+
+
+def _name(data):
+    return {anchor_disc(n): n for n in NAMES}.get(b58decode(data)[:8])
+
+
+def _keys(tx):
+    meta = tx["meta"]
+    return tx["transaction"]["message"]["accountKeys"] + meta["loadedAddresses"]["writable"] + meta["loadedAddresses"]["readonly"]
+
+
+def decoded(tx, program):
+    """(instruction name or None, account keys) for each top-level instruction of `program`, from its data bytes."""
+    keys = _keys(tx)
+    return [(_name(i["data"]), [keys[a] for a in i["accounts"]])
+            for i in tx["transaction"]["message"]["instructions"] if keys[i["programIdIndex"]] == program]
+
+
+def decoded_inner(tx, program):
+    """(parent top-level instruction name, inner instruction name, account keys) for each inner (CPI) instruction
+    of `program`, bound to its parent through the innerInstructions group index."""
+    keys, top = _keys(tx), tx["transaction"]["message"]["instructions"]
+    return [(_name(top[g["index"]]["data"]), _name(i["data"]), [keys[a] for a in i["accounts"]])
+            for g in tx["meta"].get("innerInstructions") or [] for i in g["instructions"]
+            if keys[i["programIdIndex"]] == program]
 
 
 class Chain:
@@ -173,11 +208,35 @@ class DriftReplay(unittest.TestCase):
             self.assertEqual((msg["header"]["numRequiredSignatures"], keys[0]), (1, member))
             squads = [ix for ix in msg["instructions"] if keys[ix["programIdIndex"]] == SQUADS_V4]
             self.assertTrue(squads and all(keys[ix["accounts"][0]] == COUNCIL_MS for ix in squads))
-            self.assertIn("Program log: Instruction: ProposalApprove", meta["logMessages"])
+            # Decoded from the instruction bytes, not the logs: a proposal_approve on COUNCIL_MS whose member
+            # account (index 1: multisig, member, proposal) is the signer.
+            approvals = [accts for name, accts in decoded(tx, SQUADS_V4) if name == "proposal_approve"]
+            self.assertEqual([(a[0], a[1]) for a in approvals], [(COUNCIL_MS, member)])
+            self.assertIn("Program log: Instruction: ProposalApprove", meta["logMessages"])  # secondary
+        self.assertEqual([n for n, _ in decoded(_tx(ATTACK_1), SQUADS_V4)],
+                         ["vault_transaction_create", "proposal_create", "proposal_approve"])
         executed = _tx(ATTACK_2)
-        self.assertIn("Program log: Instruction: UpdateAdmin", executed["meta"]["logMessages"])
+        self.assertEqual([n for n, _ in decoded(executed, SQUADS_V4)], ["proposal_approve", "vault_transaction_execute"])
+        # Drift's admin change ran as an inner (CPI) instruction whose parent is that vault_transaction_execute,
+        # on the Drift state account.
+        admin = [(parent, accts) for parent, name, accts in decoded_inner(executed, DRIFT_PROGRAM) if name == "update_admin"]
+        self.assertEqual(len(admin), 1)
+        self.assertEqual(admin[0][0], "vault_transaction_execute")
+        self.assertIn(DRIFT_STATE, admin[0][1])
+        self.assertIn("Program log: Instruction: UpdateAdmin", executed["meta"]["logMessages"])  # secondary
         loaded = executed["meta"]["loadedAddresses"]
         self.assertIn(DRIFT_STATE, executed["transaction"]["message"]["accountKeys"] + loaded["writable"] + loaded["readonly"])
+
+    def test_mutant_wrong_discriminator_is_not_decoded_as_an_approval(self):
+        # The decode check must be able to fail: corrupt the proposal_approve data and it no longer matches.
+        tx = json.loads(json.dumps(_tx(ATTACK_1)))
+        keys = tx["transaction"]["message"]["accountKeys"]
+        ix = [i for i in tx["transaction"]["message"]["instructions"] if keys[i["programIdIndex"]] == SQUADS_V4][-1]
+        self.assertEqual(b58decode(ix["data"])[:8], anchor_disc("proposal_approve"))
+        bad = bytearray(b58decode(ix["data"]))
+        bad[0] ^= 0xFF
+        ix["data"] = _b58encode(bytes(bad))
+        self.assertNotIn("proposal_approve", [n for n, _ in decoded(tx, SQUADS_V4)])
 
     def test_quiet_before_staging(self):
         nonce_kinds = [a["kind"] for a in self.cycles["before staging"] if "nonce" in a["kind"]]
