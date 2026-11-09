@@ -21,6 +21,11 @@ All notable changes to this project are documented here. The format follows
   that is not the queried key, a wrong owner program, or a held Token-2022 mint the endpoint
   does not return now make that check `unavailable` instead of quietly dropping the account.
   Findings on an honest endpoint are unchanged (security review 2026-11-08, finding 1).
+- Delegated amounts on Token-2022 mints with the interest-bearing or scaled-UI-amount extension
+  are shown as raw base units, labelled "display amount not computed": their display amount is
+  not amount / 10^decimals and is not computed. Severity is unaffected (it uses base units).
+- A failed mint decode for flagged token accounts is now a `coverage_gap` warning in `scan` and a
+  `token_mints:<wallet>` coverage check in `watch` (so it raises `coverage_lost`/`coverage_restored`).
 
 ## [0.3.0] - 2026-10-06
 

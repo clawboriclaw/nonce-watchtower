@@ -2,8 +2,10 @@
 the NFT-lock enrichment are decoded from the account BYTES, so an endpoint's jsonParsed view cannot hide or downgrade a
 delegate, close authority, freeze or permanent delegate."""
 import base64
+import struct
 import unittest
 
+from watchtower.base58 import b58decode
 from watchtower.rpc import RpcClient
 from watchtower.scan import enrich_lock_candidates, findings, run_scan, scan_mint, scan_token_accounts
 from watchtower.spl import NotAMint, decode_mint, decode_token_account, ui_amount_string
@@ -226,6 +228,64 @@ class RegressionFinding1(unittest.TestCase):
         self.assertTrue(errors)
 
 
+class ReviewRound1(unittest.TestCase):
+    """Octo review 2026-11-09 on ea8b999 (two P2s) and Ava's P3."""
+
+    BASE = {"mintAuthority": None, "supply": "1000000", "decimals": 6, "freezeAuthority": None}
+
+    def _t22_mint(self, *tlvs, pad=b""):
+        raw = encode_mint(self.BASE).ljust(165, b"\x00") + b"\x01"
+        for etype, value in tlvs:
+            raw += struct.pack("<HH", etype, len(value)) + value
+        return raw + pad
+
+    def test_multisig_size_padding_mint_decodes(self):
+        # Upstream adds 2 zero bytes when an extended mint would be exactly Multisig::LEN (355): PermanentDelegate +
+        # TokenMetadata filling to 355, then the padding -> 357 bytes.
+        raw = self._t22_mint((12, b58decode(DELEGATE)), (19, b"\x05" * 149), pad=b"\x00\x00")
+        self.assertEqual(len(raw), 357)
+        self.assertEqual(decode_mint(raw, T22)["permanent_delegate"], DELEGATE)
+        c = FakeClient({"getMultipleAccounts": {"value": [{"owner": T22, "data": b64(raw)}]}})
+        from watchtower.scan import scan_permanent_delegates
+        self.assertEqual(scan_permanent_delegates(c, [PYUSD]), ({PYUSD: DELEGATE}, []))
+        # One trailing byte is also the end upstream; a non-zero type with no room for its length is malformed.
+        self.assertEqual(decode_mint(raw[:-1], T22)["permanent_delegate"], DELEGATE)
+        with self.assertRaises(ValueError):
+            decode_mint(raw[:-2] + b"\x13\x00\x01", T22)
+
+    def _delegate_text(self, mint_raw):
+        info = {"mint": NFT_MINT, "owner": OWNER, "state": "initialized", "delegate": DELEGATE,
+                "tokenAmount": {"amount": "5000000"}, "delegatedAmount": {"amount": "1000000"}}
+        entry = {"pubkey": ACCT, "account": {"owner": T22, "data": b64(encode_token_account(info))}}
+        out, _ = scan_token_accounts(FakeClient({"getTokenAccountsByOwner": lambda p: {"value": [entry] if p[1]["programId"] == T22 else []}}), OWNER)
+        out["lock_check_errors"] = enrich_lock_candidates(
+            FakeClient({"getMultipleAccounts": {"value": [{"owner": T22, "data": b64(mint_raw)}]}}), out["items"])
+        rep = {"wallets": [{"pubkey": OWNER, "label": "", "nonces": {"status": "ok", "items": []}, "token_accounts": out}],
+               "mints": [], "programs": []}
+        return [(f["severity"], f["detail"]) for f in findings(rep) if f["kind"] == "token_delegate"]
+
+    def test_scaled_and_interest_bearing_mints_show_labelled_base_units(self):
+        want = [("high", f"delegate {DELEGATE} may move 1000000 base units (scaled-UI mint; display amount not computed) "
+                         f"of mint {NFT_MINT}")]
+        self.assertEqual(self._delegate_text(self._t22_mint((25, bytes(56)))), want)  # ScaledUiAmount
+        self.assertEqual(self._delegate_text(self._t22_mint((10, bytes(52)))), want)  # InterestBearingConfig
+        # Any other Token-2022 mint keeps the decimals-based display amount.
+        self.assertEqual(self._delegate_text(self._t22_mint((12, bytes(32)))),
+                         [("high", f"delegate {DELEGATE} may move 1 of mint {NFT_MINT}")])
+
+    def test_mint_enrichment_failure_is_a_visible_coverage_gap(self):
+        from watchtower.diff import diff, snapshot
+        from watchtower.rpc import RpcUnavailable
+        wallets = [{"pubkey": DELEGATOR, "label": "d"}]
+        base = snapshot(run_scan(RpcClient(transport=FixtureRpc()), wallets))
+        self.assertEqual(base["coverage"][f"token_mints:{DELEGATOR}"], "ok")
+        broken = FixtureRpc(overrides={("getMultipleAccounts", None): RpcUnavailable("getMultipleAccounts", "HTTP 503")})
+        rep = run_scan(RpcClient(transport=broken, retries=0), wallets)
+        self.assertTrue(rep["wallets"][0]["token_accounts"]["lock_check_errors"])
+        self.assertTrue(any(f["kind"] == "coverage_gap" and "token mint check unavailable" in f["detail"] for f in rep["findings"]))
+        after = snapshot(rep, base)
+        self.assertEqual(after["coverage"][f"token_mints:{DELEGATOR}"], "unavailable")
+        self.assertIn(("coverage_lost", f"token_mints:{DELEGATOR}"), {(a["kind"], a["subject"]) for a in diff(base, after)})
 
 
 if __name__ == "__main__":

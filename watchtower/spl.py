@@ -29,8 +29,10 @@ MULTISIG_SIZE = 355
 ACCOUNT_TYPE_MINT = 1
 ACCOUNT_TYPE_ACCOUNT = 2
 EXT_MINT_CLOSE_AUTHORITY = 3
+EXT_INTEREST_BEARING = 10
 EXT_PERMANENT_DELEGATE = 12
 EXT_TRANSFER_HOOK = 14
+EXT_SCALED_UI_AMOUNT = 25  # ExtensionType enum order upstream (2026-11-09): ... ConfidentialMintBurn 24, ScaledUiAmount 25
 _STATES = {1: "initialized", 2: "frozen"}
 _ZERO32 = bytes(32)
 
@@ -94,14 +96,18 @@ def decode_token_account(raw, program):
 
 
 def _mint_extensions(raw):
-    """Token-2022 TLV area -> {type: value bytes}. Stops at an Uninitialized (0) type, like the program does."""
+    """Token-2022 TLV area -> {type: value bytes}, following upstream `try_for_each_tlv_extension_type`
+    (interface/src/extension/mod.rs): fewer than 2 bytes left, or an Uninitialized (0) type, is the end. That end
+    matters: an extended account that would be exactly Multisig::LEN (355) gets 2 zero padding bytes (357)."""
     exts, at = {}, ACCOUNT_SIZE + 1
     while at < len(raw):
-        if at + 4 > len(raw):
-            raise ValueError("truncated mint extension header")
+        if at + 2 > len(raw):
+            break
         etype = int.from_bytes(raw[at : at + 2], "little")
         if etype == 0:
             break
+        if at + 4 > len(raw):
+            raise ValueError("truncated mint extension header")
         length = int.from_bytes(raw[at + 2 : at + 4], "little")
         value = raw[at + 4 : at + 4 + length]
         if len(value) != length:
@@ -142,4 +148,6 @@ def decode_mint(raw, program):
         "permanent_delegate": _nonzero_key(exts[EXT_PERMANENT_DELEGATE]) if EXT_PERMANENT_DELEGATE in exts else None,
         "transfer_hook_authority": _nonzero_key(hook[:32]) if hook is not None else None,
         "transfer_hook_program": _nonzero_key(hook[32:]) if hook is not None else None,
+        # The display amount of these mints is not amount / 10**decimals; we do not compute it (raw units only).
+        "ui_scaled": EXT_INTEREST_BEARING in exts or EXT_SCALED_UI_AMOUNT in exts,
     }

@@ -87,6 +87,8 @@ def snapshot(report, previous=None):
 
         t = w["token_accounts"]
         snap["coverage"][f"tokens:{pk}"] = t["status"]
+        # Mint decoding for flagged token accounts (decimals, NFT-lock grading) failing is a gap too (review 2026-11-09).
+        snap["coverage"][f"token_mints:{pk}"] = "unavailable" if t.get("lock_check_errors") else "ok"
         pstat = t.get("program_status", {})
         for it in t["items"]:
             snap["tokens"][it["account"]] = {
@@ -293,6 +295,9 @@ def diff(old, new, labels=None):
             elif key.startswith("stream"):
                 detail = (f"live stream is {st}: only the periodic scan is running, so a change is seen late and one that "
                           "reverts between scans is missed")
+            elif key.startswith("token_mints:"):
+                detail = (f"token mint check is {st}: delegate amounts are shown in base units and NFT locks are graded "
+                          "as plain delegates until the mints decode again")
             else:
                 detail = f"check is {st}; last known values are being held, changes are NOT being detected"
             add("warn", "coverage_lost", key, detail, None, before, st)

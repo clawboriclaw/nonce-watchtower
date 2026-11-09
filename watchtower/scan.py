@@ -207,7 +207,9 @@ def enrich_lock_candidates(client, items):
         if mi is None:
             continue
         it["decimals"] = mi["decimals"]
-        if it.get("delegated_amount") is not None:
+        if mi["ui_scaled"]:
+            it["ui_scaled"] = True  # interest-bearing / scaled-UI mint: no display amount, raw base units only
+        elif it.get("delegated_amount") is not None:
             it["delegated_ui"] = ui_amount_string(int(it["delegated_amount"]), mi["decimals"])
         if _lock_shape(it):
             it.update(mint_checked=True, mint_supply=mi["supply"], mint_freeze_authority=mi["freeze_authority"])
@@ -493,6 +495,16 @@ def outside_fee_payer_text(pv):
             f"in {pv['signature']}. A sponsored fee is common, but confirm you know who relayed it.")
 
 
+def _delegated_text(it):
+    if it.get("delegated_ui"):
+        return it["delegated_ui"]
+    if it.get("ui_scaled"):
+        return f"{it['delegated_amount']} base units (scaled-UI mint; display amount not computed)"
+    if it.get("decimals") is None and it.get("delegated_amount") is not None:
+        return f"{it['delegated_amount']} base units (mint not decoded)"
+    return it["delegated_amount"]
+
+
 def findings(report):
     out = []
 
@@ -547,6 +559,10 @@ def findings(report):
         t = w["token_accounts"]
         if t["status"] != "ok":
             add("warn", "coverage_gap", w["pubkey"], f"token-account check {t['status']}: {'; '.join(t.get('errors', []))}", who)
+        if t.get("lock_check_errors"):
+            add("warn", "coverage_gap", w["pubkey"],
+                f"token mint check unavailable: {scrub('; '.join(t['lock_check_errors']))}. Amounts of the affected delegates are "
+                "shown in base units and NFT locks on them are graded as plain delegates", who)
         for it in t.get("items", []):
             if it["delegate"] and is_nft_lock(it):
                 sev = lock_severity(it)
@@ -561,7 +577,7 @@ def findings(report):
                     "high" if live else "medium",
                     "token_delegate",
                     it["account"],
-                    f"delegate {it['delegate']} may move {it['delegated_ui'] or it['delegated_amount']} of mint {it['mint']}",
+                    f"delegate {it['delegate']} may move {_delegated_text(it)} of mint {it['mint']}",
                     who,
                 )
             if it["close_authority"] and it["close_authority"] != w["pubkey"]:
