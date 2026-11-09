@@ -87,9 +87,19 @@ def snapshot(report, previous=None):
 
         t = w["token_accounts"]
         snap["coverage"][f"tokens:{pk}"] = t["status"]
-        # Mint decoding for flagged token accounts (decimals, NFT-lock grading) failing is a gap too (review 2026-11-09).
-        snap["coverage"][f"token_mints:{pk}"] = "unavailable" if t.get("lock_check_errors") else "ok"
         pstat = t.get("program_status", {})
+        # Mint decoding for flagged token accounts (decimals, NFT-lock grading) failing is a gap too (review 2026-11-09).
+        # It can only be judged on the accounts that were enumerated: an observed decode failure is "unavailable";
+        # "ok" needs BOTH token programs enumerated (no errors on a partial inventory proves nothing about the rest).
+        # Otherwise it is not evaluated this cycle and the last known value is held, so a token-enumeration outage
+        # neither fakes a coverage_restored nor stacks a second coverage_lost on the tokens:<wallet> one that fires.
+        mkey = f"token_mints:{pk}"
+        if t.get("lock_check_errors"):
+            snap["coverage"][mkey] = "unavailable"
+        elif pstat and all(v == "ok" for v in pstat.values()):
+            snap["coverage"][mkey] = "ok"
+        elif mkey in prev["coverage"]:
+            snap["coverage"][mkey] = prev["coverage"][mkey]
         for it in t["items"]:
             snap["tokens"][it["account"]] = {
                 "wallet": pk,

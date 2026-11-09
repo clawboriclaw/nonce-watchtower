@@ -461,6 +461,8 @@ def is_complete(report):
     for w in report["wallets"]:
         if w["nonces"]["status"] != "ok" or w["token_accounts"]["status"] != "ok":
             return False
+        if w["token_accounts"].get("lock_check_errors"):
+            return False  # mint decoding failed: a coverage_gap finding and token_mints coverage say so too
         for it in w["nonces"].get("items", []):
             if report.get("provenance") == "on" and (it.get("provenance") or {}).get("status") != "ok":
                 return False

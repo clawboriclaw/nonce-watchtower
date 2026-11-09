@@ -286,6 +286,67 @@ class ReviewRound1(unittest.TestCase):
         after = snapshot(rep, base)
         self.assertEqual(after["coverage"][f"token_mints:{DELEGATOR}"], "unavailable")
         self.assertIn(("coverage_lost", f"token_mints:{DELEGATOR}"), {(a["kind"], a["subject"]) for a in diff(base, after)})
+        self.assertFalse(rep["complete"])
+
+
+class MintCoverageNeedsEnumeration(unittest.TestCase):
+    """Octo review round 2 (7c53b97): token_mints coverage may only be "ok" when the token inventory it is judged
+    on was enumerated under both programs; otherwise it is held, never a false coverage_restored."""
+
+    KEY = f"token_mints:{DELEGATOR}"
+
+    def _snap(self, prev, mint_down=False, tabo_down=()):
+        from watchtower.diff import snapshot
+        from watchtower.rpc import RpcUnavailable
+        rpc = FixtureRpc()
+
+        def route(m, p):
+            if m == "getMultipleAccounts" and mint_down:
+                raise RpcUnavailable(m, "HTTP 503")
+            if m == "getTokenAccountsByOwner" and p[1]["programId"] in tabo_down:
+                raise RpcUnavailable(m, "HTTP 503")
+            return rpc(m, p)
+        rep = run_scan(RpcClient(transport=route, retries=0), [{"pubkey": DELEGATOR, "label": "d"}])
+        return snapshot(rep, prev)
+
+    def _alerts(self, old, new):
+        from watchtower.diff import diff
+        return {a["kind"] for a in diff(old, new) if a["subject"] == self.KEY}
+
+    def test_octo_sequence_has_no_false_restore(self):
+        ok = self._snap(None)
+        self.assertEqual(ok["coverage"][self.KEY], "ok")
+        s1 = self._snap(ok, mint_down=True)                              # 1. mint fetch fails
+        self.assertEqual(s1["coverage"][self.KEY], "unavailable")
+        self.assertEqual(self._alerts(ok, s1), {"coverage_lost"})
+        s2 = self._snap(s1, mint_down=True, tabo_down=(SPL, T22))        # 2. enumeration fails too
+        self.assertEqual(s2["coverage"][self.KEY], "unavailable")         # held, not "ok"
+        self.assertEqual(self._alerts(s1, s2), set())                    # no false coverage_restored
+        s3 = self._snap(s2, mint_down=True)                              # 3. enumeration back, mints still down
+        self.assertEqual(self._alerts(s2, s3), set())                    # no second coverage_lost
+        s4 = self._snap(s3)                                              # 4. really recovered
+        self.assertEqual(self._alerts(s3, s4), {"coverage_restored"})
+
+    def test_complete_enumeration_failure_is_not_evaluated(self):
+        ok = self._snap(None)
+        down = self._snap(ok, tabo_down=(SPL, T22))
+        self.assertEqual(down["coverage"][self.KEY], "ok")  # last known value held, not re-judged
+        self.assertEqual(self._alerts(ok, down), set())
+        self.assertNotIn(self.KEY, self._snap(None, tabo_down=(SPL, T22))["coverage"])  # nothing known yet: not reported
+
+    def test_partial_enumeration_failure_cannot_restore(self):
+        bad = self._snap(None, mint_down=True)
+        for prog in (SPL, T22):
+            part = self._snap(bad, tabo_down=(prog,))  # the other program's mints decode fine
+            self.assertEqual(part["coverage"][self.KEY], "unavailable", prog)
+            self.assertEqual(self._alerts(bad, part), set())
+
+    def test_genuinely_empty_wallet_is_ok(self):
+        from watchtower.diff import snapshot
+        rep = run_scan(RpcClient(transport=FixtureRpc()), [{"pubkey": EMPTY, "label": "e"}])
+        self.assertEqual(rep["wallets"][0]["token_accounts"]["items"], [])
+        self.assertEqual(snapshot(rep)["coverage"][f"token_mints:{EMPTY}"], "ok")
+        self.assertTrue(rep["complete"])
 
 
 if __name__ == "__main__":

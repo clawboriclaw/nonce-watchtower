@@ -25,7 +25,12 @@ All notable changes to this project are documented here. The format follows
   are shown as raw base units, labelled "display amount not computed": their display amount is
   not amount / 10^decimals and is not computed. Severity is unaffected (it uses base units).
 - A failed mint decode for flagged token accounts is now a `coverage_gap` warning in `scan` and a
-  `token_mints:<wallet>` coverage check in `watch` (so it raises `coverage_lost`/`coverage_restored`).
+  `token_mints:<wallet>` coverage check in `watch` (so it raises `coverage_lost`/`coverage_restored`),
+  and the scan is no longer `complete`. The check is only judged "ok" when both token programs were
+  enumerated; during a token-enumeration outage its last known value is held, so it never reports a
+  false recovery. The first `watch` cycle after upgrading may report `coverage_lost` for
+  `token_mints:<wallet>`: that is a mint-decode gap that already existed and was not visible before,
+  not a fault introduced by the upgrade.
 
 ## [0.3.0] - 2026-10-06
 
