@@ -38,7 +38,7 @@ import random
 import sys
 import time
 
-from .base58 import b58decode
+from .base58 import b58decode, is_pubkey
 from .decode import SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, UPGRADEABLE_LOADER, account_bytes, decode_nonce
 from .alerts import emit_stdout
 from .diff import COVERAGE_OK
@@ -382,6 +382,9 @@ class StreamWatcher:
             value = result["value"]
             if kind == "nonces":
                 pubkey, acct = value["pubkey"], value["account"]
+                if not is_pubkey(pubkey):  # security scan 2026-11-08, finding 2: never echo an invalid id into alerts
+                    pubkey = None
+                    raise ValueError("notification account id is not a valid public key")
             else:
                 acct = value
                 if acct is None or acct.get("lamports") == 0:

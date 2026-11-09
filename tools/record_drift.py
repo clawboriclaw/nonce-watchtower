@@ -10,6 +10,7 @@ for what is recorded and what the test reconstructs from it.
 
 import argparse
 import json
+import re
 import os
 import sys
 import time
@@ -61,6 +62,10 @@ def main():
             sys.exit(f"{acct}: {len(older)} signature(s) older than the first page; history is not complete")
         sigs.update(rec["signature"] for rec in page)
         save(f"account_{acct}.json", "getAccountInfo", [acct, {"encoding": "base64", "commitment": "finalized"}])
+    # Security scan 2026-11-08 (finding 3): signatures come from the endpoint and become file names — base58 only.
+    bad = sorted(s for s in sigs if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,88}", s or ""))
+    if bad:
+        sys.exit(f"endpoint returned {len(bad)} signature(s) that are not base58; refusing to use them as file names")
     if len({s[:8] for s in sigs}) != len(sigs):
         sys.exit("two signatures share an 8-character prefix; fixture file names would collide")
     for sig in sorted(sigs):

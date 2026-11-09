@@ -8,7 +8,7 @@ look like a clean bill of health.
 import datetime as _dt
 
 from . import __version__
-from .base58 import require_pubkey
+from .base58 import is_pubkey, require_pubkey
 from .decode import (
     LOADER_V4,
     NON_UPGRADEABLE_LOADERS,
@@ -104,7 +104,9 @@ def scan_nonces(client, authority):
     items, rejected = [], 0
     for entry in res:
         acct = entry.get("account", {})
-        if acct.get("owner") != SYSTEM_PROGRAM:
+        # Security scan 2026-11-08 (finding 2): the account id comes from the endpoint and becomes an alert subject and
+        # a snapshot key — never use one that is not a valid public key (terminal/log injection, key collisions).
+        if acct.get("owner") != SYSTEM_PROGRAM or not is_pubkey(entry.get("pubkey")):
             rejected += 1
             continue
         try:
@@ -199,6 +201,8 @@ def scan_token_accounts(client, owner):
                 [owner, {"programId": program}, {"encoding": "jsonParsed"}],
             )
             for entry in res.get("value", []):
+                if not is_pubkey(entry.get("pubkey")):  # security scan 2026-11-08, finding 2
+                    raise ValueError("endpoint returned a token account whose id is not a valid public key")
                 it = _token_item(entry, program)
                 if it["owner"] != owner:
                     continue
@@ -207,7 +211,7 @@ def scan_token_accounts(client, owner):
                 if it["delegate"] or (it["close_authority"] and it["close_authority"] != owner) or it["state"] == "frozen":
                     items.append(it)
             program_status[program] = "ok"
-        except (RpcError, RpcUnavailable, KeyError, TypeError, AttributeError) as e:
+        except (RpcError, RpcUnavailable, KeyError, TypeError, AttributeError, ValueError) as e:
             errors.append(f"{program}: {e}")
     items.sort(key=lambda x: x["account"])
     out = {
