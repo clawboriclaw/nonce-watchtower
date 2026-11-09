@@ -8,7 +8,7 @@ import unittest
 from watchtower.base58 import b58decode
 from watchtower.scan import scan_nonces, scan_token_accounts
 
-from .helpers import NONCE_AUTH
+from .helpers import NONCE_AUTH, encode_token_account
 
 SYSTEM = "11111111111111111111111111111111"
 TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -51,7 +51,8 @@ class TokenIds(unittest.TestCase):
     def _entry(self, pubkey):
         info = {"mint": GOOD_ACCT, "owner": NONCE_AUTH, "state": "initialized", "delegate": NONCE_AUTH,
                 "delegatedAmount": {"amount": "1"}, "tokenAmount": {"amount": "5", "decimals": 0}}
-        return {"pubkey": pubkey, "account": {"data": {"parsed": {"info": info}}}}
+        raw = encode_token_account(info)  # the scanner decodes bytes (finding 1), not the parsed view
+        return {"pubkey": pubkey, "account": {"owner": TOKEN, "data": [base64.b64encode(raw).decode(), "base64"]}}
 
     def test_invalid_token_account_id_makes_the_program_unavailable(self):
         def answer(params):
@@ -62,7 +63,9 @@ class TokenIds(unittest.TestCase):
         self.assertFalse(any("\x1b" in i["account"] for i in out["items"]))
 
     def test_valid_token_account_id_is_kept(self):
-        out, _ = scan_token_accounts(FakeClient({"getTokenAccountsByOwner": {"value": [self._entry(GOOD_ACCT)]}}), NONCE_AUTH)
+        def answer(params):
+            return {"value": [self._entry(GOOD_ACCT)]} if params[1]["programId"] == TOKEN else {"value": []}
+        out, _ = scan_token_accounts(FakeClient({"getTokenAccountsByOwner": answer}), NONCE_AUTH)
         self.assertEqual(out["status"], "ok")
         self.assertIn(GOOD_ACCT, [i["account"] for i in out["items"]])
 

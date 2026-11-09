@@ -27,6 +27,7 @@ from .decode import (
 from .provenance import classify, nonce_provenance
 from .redact import scrub
 from .rpc import DEFAULT_MAX_BLOCK_AGE, DEFAULT_MAX_SLOT_LAG, RPC_ENV_VAR, FreshnessGuard, RpcError, RpcStale, RpcUnavailable
+from .spl import NotAMint, decode_mint, decode_token_account, ui_amount_string
 from .squads import resolve_multisig, watched_keys
 
 GPA_ADVICE = (
@@ -129,20 +130,25 @@ def scan_nonces(client, authority):
 
 
 def _token_item(entry, program):
-    info = entry["account"]["data"]["parsed"]["info"]
-    delegated = info.get("delegatedAmount") or {}
+    """Decision fields come from the account BYTES (security scan 2026-11-08, finding 1), never the endpoint's
+    jsonParsed view. `decimals`/`delegated_ui` are filled from the decoded mint by enrich_lock_candidates."""
+    acct = entry["account"]
+    if acct.get("owner") != program:
+        raise ValueError("endpoint returned a token account not owned by the queried token program")
+    d = decode_token_account(account_bytes(acct), program)
     return {
         "account": entry["pubkey"],
         "program": program,
-        "mint": info.get("mint"),
-        "owner": info.get("owner"),
-        "state": info.get("state"),
-        "delegate": info.get("delegate"),
-        "delegated_amount": delegated.get("amount"),
-        "delegated_ui": delegated.get("uiAmountString"),
-        "close_authority": info.get("closeAuthority"),
-        "amount": (info.get("tokenAmount") or {}).get("amount"),
-        "decimals": (info.get("tokenAmount") or {}).get("decimals"),
+        "mint": d["mint"],
+        "owner": d["owner"],
+        "state": d["state"],
+        "delegate": d["delegate"],
+        # As the RPC's parsed view did: no delegate -> no delegated amount (the program zeroes it on revoke).
+        "delegated_amount": d["delegated_amount"] if d["delegate"] else None,
+        "delegated_ui": None,
+        "close_authority": d["close_authority"],
+        "amount": d["amount"],
+        "decimals": None,
     }
 
 
@@ -165,27 +171,46 @@ def lock_severity(it):
     return "info" if it.get("mint_freeze_authority") is None else "medium"
 
 
-def enrich_lock_candidates(client, items):
-    """Fetch supply + freeze authority for mints of lock-shaped items. Failure leaves them unverified (= loud)."""
-    mints = sorted({it["mint"] for it in items if _lock_shape(it) and it.get("mint")})
-    info, errors = {}, []
+def _fetch_mints(client, mints, program_of):
+    """Decode mints locally (base64). Returns ({mint: decoded}, [errors]). A mint that is missing, owned by another
+    program than `program_of(mint)`, or does not decode is an error, never silently skipped."""
+    out, errors = {}, []
     for i in range(0, len(mints), 100):
         chunk = mints[i : i + 100]
         try:
-            res = client.call("getMultipleAccounts", [chunk, {"encoding": "jsonParsed"}])
+            res = client.call("getMultipleAccounts", [chunk, {"encoding": "base64"}])
             values = res.get("value", [])
             if len(values) != len(chunk):
                 raise ValueError(f"getMultipleAccounts returned {len(values)} values for {len(chunk)} mints")
-            for mint, v in zip(chunk, values):
-                parsed = (v or {}).get("data", {}).get("parsed", {}) if isinstance((v or {}).get("data"), dict) else {}
-                if parsed.get("type") == "mint":
-                    info[mint] = parsed["info"]
         except (RpcError, RpcUnavailable, KeyError, TypeError, AttributeError, ValueError) as e:
             errors.append(str(e))
+            continue
+        for mint, v in zip(chunk, values):
+            try:
+                if not v:
+                    raise ValueError("mint account missing")
+                if v.get("owner") != program_of(mint):
+                    raise ValueError(f"mint owned by {v.get('owner')!r}, expected {program_of(mint)}")
+                out[mint] = decode_mint(account_bytes(v), v["owner"])
+            except (KeyError, TypeError, AttributeError, ValueError) as e:
+                errors.append(f"{mint}: {e}")
+    return out, errors
+
+
+def enrich_lock_candidates(client, items):
+    """Decode the mints of flagged items: decimals (ui amounts, lock shape) and supply + freeze authority (lock
+    grading). Failure leaves decimals unknown, so a lock stays a plain (loud) delegate shown in base units."""
+    programs = {it["mint"]: it["program"] for it in items if it.get("mint")}
+    info, errors = _fetch_mints(client, sorted(programs), programs.get)
     for it in items:
         mi = info.get(it.get("mint"))
-        if _lock_shape(it) and mi is not None:
-            it.update(mint_checked=True, mint_supply=str(mi.get("supply")), mint_freeze_authority=mi.get("freezeAuthority"))
+        if mi is None:
+            continue
+        it["decimals"] = mi["decimals"]
+        if it.get("delegated_amount") is not None:
+            it["delegated_ui"] = ui_amount_string(int(it["delegated_amount"]), mi["decimals"])
+        if _lock_shape(it):
+            it.update(mint_checked=True, mint_supply=mi["supply"], mint_freeze_authority=mi["freeze_authority"])
     return errors
 
 
@@ -198,14 +223,14 @@ def scan_token_accounts(client, owner):
         try:
             res = client.call(
                 "getTokenAccountsByOwner",
-                [owner, {"programId": program}, {"encoding": "jsonParsed"}],
+                [owner, {"programId": program}, {"encoding": "base64"}],
             )
             for entry in res.get("value", []):
                 if not is_pubkey(entry.get("pubkey")):  # security scan 2026-11-08, finding 2
                     raise ValueError("endpoint returned a token account whose id is not a valid public key")
                 it = _token_item(entry, program)
-                if it["owner"] != owner:
-                    continue
+                if it["owner"] != owner:  # the bytes say it is not the queried key's account: the answer is wrong
+                    raise ValueError("endpoint returned a token account whose decoded owner is not the queried key")
                 if program == TOKEN_2022_PROGRAM and it["mint"]:
                     mints_2022.add(it["mint"])
                 if it["delegate"] or (it["close_authority"] and it["close_authority"] != owner) or it["state"] == "frozen":
@@ -225,46 +250,29 @@ def scan_token_accounts(client, owner):
 
 
 def _mint_info(value):
-    parsed = value["data"]["parsed"]
-    if parsed.get("type") != "mint":
-        return None
-    info = parsed["info"]
-    exts = {e.get("extension"): e.get("state") or {} for e in info.get("extensions", [])}
+    """Mint authorities decoded from the bytes (finding 1). Raises NotAMint / ValueError."""
+    d = decode_mint(account_bytes(value), value.get("owner"))
     return {
         "program": value.get("owner"),
-        "mint_authority": info.get("mintAuthority"),
-        "freeze_authority": info.get("freezeAuthority"),
-        "permanent_delegate": exts.get("permanentDelegate", {}).get("delegate"),
-        "close_authority": exts.get("mintCloseAuthority", {}).get("closeAuthority"),
-        "transfer_hook_program": exts.get("transferHook", {}).get("programId"),
-        "transfer_hook_authority": exts.get("transferHook", {}).get("authority"),
+        "mint_authority": d["mint_authority"],
+        "freeze_authority": d["freeze_authority"],
+        "permanent_delegate": d["permanent_delegate"],
+        "close_authority": d["close_authority"],
+        "transfer_hook_program": d["transfer_hook_program"],
+        "transfer_hook_authority": d["transfer_hook_authority"],
     }
 
 
 def scan_permanent_delegates(client, mints):
-    """Token-2022 mints whose permanent delegate can move any holder's balance."""
-    found, errors = {}, []
-    for i in range(0, len(mints), 100):
-        chunk = mints[i : i + 100]
-        try:
-            res = client.call("getMultipleAccounts", [chunk, {"encoding": "jsonParsed"}])
-            values = res.get("value", [])
-            if len(values) != len(chunk):
-                raise ValueError(f"getMultipleAccounts returned {len(values)} values for {len(chunk)} mints")
-            for mint, value in zip(chunk, values):
-                if not value:
-                    continue
-                mi = _mint_info(value)
-                if mi and mi["permanent_delegate"]:
-                    found[mint] = mi["permanent_delegate"]
-        except (RpcError, RpcUnavailable, KeyError, TypeError, AttributeError, ValueError) as e:
-            errors.append(str(e))
-    return found, errors
+    """Token-2022 mints whose permanent delegate can move any holder's balance. A held mint the endpoint does not
+    return, or whose bytes do not decode, is an error (the check becomes unavailable), never "no delegate"."""
+    info, errors = _fetch_mints(client, list(mints), lambda _mint: TOKEN_2022_PROGRAM)
+    return {m: mi["permanent_delegate"] for m, mi in info.items() if mi["permanent_delegate"]}, errors
 
 
 def scan_mint(client, mint):
     try:
-        res = client.call("getAccountInfo", [mint, {"encoding": "jsonParsed"}])
+        res = client.call("getAccountInfo", [mint, {"encoding": "base64"}])
     except (RpcError, RpcUnavailable) as e:
         return {"mint": mint, **_err(e)}
     value = (res or {}).get("value")
@@ -274,10 +282,10 @@ def scan_mint(client, mint):
         return {"mint": mint, "status": "not_a_mint", "owner_program": value.get("owner")}
     try:
         mi = _mint_info(value)
-    except (KeyError, TypeError):
-        mi = None
-    if mi is None:
+    except NotAMint:
         return {"mint": mint, "status": "not_a_mint", "owner_program": value.get("owner")}
+    except (KeyError, TypeError, AttributeError, ValueError) as e:
+        return {"mint": mint, "status": "unavailable", "error": f"mint bytes did not decode locally: {e}"}
     return {"mint": mint, "status": "ok", **mi}
 
 

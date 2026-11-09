@@ -1,7 +1,11 @@
+import base64
 import copy
 import json
 import os
+import struct
 import time
+
+from watchtower.base58 import b58decode
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -27,6 +31,94 @@ NONCE_ACCOUNTS = [
     "9nnX6BEZ8SURh9WscvxtCWuDhwzaTazkqrs2P6LnxLTn",
     "HZa8Hb8F4EZJZiqTMn9Vb9SWekpuFLUwnAu2MQM5CxrS",
 ]
+
+
+# Order of the mints in fixtures/layout_mints_*.json (tools: see fixtures/README.md).
+LAYOUT_MINTS = [
+    USDC, PYUSD, "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+    "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "So11111111111111111111111111111111111111112",
+    "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL", "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7",
+]
+DELEGATOR_SPL_MINTS = set(LAYOUT_MINTS[3:])
+
+
+# --- jsonParsed fixture -> account bytes -------------------------------------------------------------------------
+# The scanner requests base64 for token accounts and mints (security scan 2026-11-08, finding 1). The recorded
+# 2026-10-06 fixtures are jsonParsed, so the fake RPC re-encodes their parsed fields into the SPL byte layout. The
+# layout itself is pinned by tests/test_spl.py against base64 + jsonParsed answers recorded together from mainnet.
+
+def _coption(key):
+    return bytes(36) if not key else (1).to_bytes(4, "little") + b58decode(key)
+
+
+def _key_or_zero(key):
+    return b58decode(key) if key else bytes(32)
+
+
+def encode_token_account(info, space=165):
+    native = info.get("rentExemptReserve") if info.get("isNative") else None
+    raw = (b58decode(info["mint"]) + b58decode(info["owner"])
+           + int(info["tokenAmount"]["amount"]).to_bytes(8, "little") + _coption(info.get("delegate"))
+           + bytes([{"initialized": 1, "frozen": 2}[info["state"]]])
+           + (bytes(12) if native is None else (1).to_bytes(4, "little") + int(native["amount"]).to_bytes(8, "little"))
+           + int((info.get("delegatedAmount") or {}).get("amount", 0)).to_bytes(8, "little")
+           + _coption(info.get("closeAuthority")))
+    if info.get("extensions") is not None:
+        raw += b"\x02"
+        for e in info["extensions"]:
+            if e["extension"] == "immutableOwner":
+                raw += struct.pack("<HH", 7, 0)
+            elif e["extension"] == "transferHookAccount":
+                raw += struct.pack("<HHB", 15, 1, int(e["state"]["transferring"]))
+    return raw.ljust(space, b"\x00")
+
+
+def encode_mint(info, space=82):
+    raw = (_coption(info.get("mintAuthority")) + int(info["supply"]).to_bytes(8, "little")
+           + bytes([info["decimals"], 1 if info.get("isInitialized", True) else 0]) + _coption(info.get("freezeAuthority")))
+    if info.get("extensions") is not None:
+        raw = raw.ljust(165, b"\x00") + b"\x01"
+        for e in info["extensions"]:
+            st = e.get("state") or {}
+            if e["extension"] == "mintCloseAuthority":
+                raw += struct.pack("<HH", 3, 32) + _key_or_zero(st.get("closeAuthority"))
+            elif e["extension"] == "permanentDelegate":
+                raw += struct.pack("<HH", 12, 32) + _key_or_zero(st.get("delegate"))
+            elif e["extension"] == "transferHook":
+                raw += struct.pack("<HH", 14, 64) + _key_or_zero(st.get("authority")) + _key_or_zero(st.get("programId"))
+    return raw.ljust(space, b"\x00")
+
+
+def _encode_account(acct):
+    data = acct.get("data")
+    if not (isinstance(data, dict) and "parsed" in data):
+        return acct
+    parsed, space = data["parsed"], data.get("space", acct.get("space"))
+    raw = (encode_mint(parsed["info"], space) if parsed["type"] == "mint"
+           else encode_token_account(parsed["info"], space))
+    return dict(acct, data=[base64.b64encode(raw).decode(), "base64"])
+
+
+def as_base64(resp):
+    """A recorded jsonParsed RPC response with every parsed token account / mint re-encoded as base64 bytes."""
+    resp = copy.deepcopy(resp)
+    res = resp.get("result") if isinstance(resp, dict) else None
+    val = res.get("value") if isinstance(res, dict) else None
+    if isinstance(val, dict):
+        res["value"] = _encode_account(val)
+    elif isinstance(val, list):
+        res["value"] = [
+            (dict(v, account=_encode_account(v["account"])) if isinstance(v, dict) and "account" in v
+             else _encode_account(v) if isinstance(v, dict) else v)
+            for v in val
+        ]
+    return resp
+
+
+def _asks_base64(method, params):
+    at = {"getTokenAccountsByOwner": 2, "getMultipleAccounts": 1, "getAccountInfo": 1}.get(method)
+    return at is not None and len(params) > at and (params[at] or {}).get("encoding") == "base64"
 
 
 def load(name):
@@ -59,6 +151,8 @@ class FixtureRpc:
         if method == "getBlockTime" and ("getBlockTime", None) not in self.overrides:
             return {"jsonrpc": "2.0", "id": 1, "result": int(time.time() - self.block_age)}
         resp = self._route(method, params)
+        if _asks_base64(method, params):
+            resp = as_base64(resp)  # recorded jsonParsed token/mint fixtures, re-encoded into their byte layout
         # Real nodes wrap getProgramAccounts in {context, value} when asked withContext.
         if (method == "getProgramAccounts" and isinstance(resp, dict) and isinstance(resp.get("result"), list)
                 and (params[1] or {}).get("withContext") and self.gpa_context):
@@ -89,12 +183,18 @@ class FixtureRpc:
             return empty_tabo()
         if method == "getMultipleAccounts":
             base = load("t22_mints.json")
+            # Mints of the delegator's SPL accounts, recorded in base64 (see fixtures/README.md, layout_*).
+            spl_mints = dict(zip(LAYOUT_MINTS, load("layout_mints_base64.json")["result"]["value"]))
             vals = []
             for m in params[0]:
                 if m == PYUSD:
                     vals.append(load("mint_pyusd_t22.json")["result"]["value"])
+                elif m == USDC:
+                    vals.append(load("mint_usdc.json")["result"]["value"])
                 elif m == base_mint(base):
                     vals.append(base["result"]["value"][0])
+                elif m in DELEGATOR_SPL_MINTS:
+                    vals.append(spl_mints[m])
                 else:
                     vals.append(None)
             base["result"]["value"] = vals

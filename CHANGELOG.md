@@ -12,6 +12,16 @@ All notable changes to this project are documented here. The format follows
 - Release workflow builds, tests and publishes to PyPI through Trusted Publishing (no stored token).
 - `SECURITY.md`, `CONTRIBUTING.md`, this changelog and issue templates.
 
+### Security
+- Token accounts, watched mints, Token-2022 permanent delegates and the NFT-lock check are
+  decoded locally from base64 account bytes (`watchtower/spl.py`) instead of the RPC endpoint's
+  `jsonParsed` view, so a dishonest endpoint can no longer hide or downgrade a delegate, close
+  authority, freeze or freeze authority by editing its parsed output. Decimals and ui amounts
+  come from the decoded mint of each flagged account. Bytes that do not decode, a decoded owner
+  that is not the queried key, a wrong owner program, or a held Token-2022 mint the endpoint
+  does not return now make that check `unavailable` instead of quietly dropping the account.
+  Findings on an honest endpoint are unchanged (security review 2026-11-08, finding 1).
+
 ## [0.3.0] - 2026-10-06
 
 ### Added

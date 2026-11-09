@@ -14,7 +14,7 @@ from watchtower.diff import diff, snapshot
 from watchtower.rpc import RpcClient
 from watchtower.scan import run_scan
 
-from .helpers import DELEGATOR, EMPTY, JUP, NONCE_AUTH, USDC, FixtureRpc, load
+from .helpers import DELEGATOR, EMPTY, JUP, NONCE_AUTH, USDC, FixtureRpc, as_base64, load
 
 
 def report(rpc, wallets=(NONCE_AUTH, DELEGATOR), mints=(USDC,), programs=(JUP,)):
@@ -80,7 +80,7 @@ class DiffTests(unittest.TestCase):
 
         def route(m, p):
             if m == "getTokenAccountsByOwner" and p[0] == DELEGATOR and p[1]["programId"].startswith("Tokenkeg"):
-                return copy.deepcopy(t)
+                return as_base64(t)
             return orig(m, p)
 
         after = snapshot(run_scan(RpcClient(transport=route), [{"pubkey": NONCE_AUTH}, {"pubkey": DELEGATOR}], [USDC], [JUP]), self.base)

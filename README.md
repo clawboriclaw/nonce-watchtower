@@ -131,6 +131,11 @@ nonce staged *before* you installed the tool does not get quietly accepted as ba
 - **The server-side filter is not trusted.** Every returned nonce account is decoded
   locally, and it is dropped unless its owner is the System program and its authority
   bytes equal the queried key.
+- **Token findings come from the bytes, not the endpoint's parsing.** Token accounts and mints
+  (both token programs) are fetched as base64 and decoded locally (`watchtower/spl.py`):
+  owner, delegate, delegated amount, state, close authority, mint supply, decimals, freeze
+  authority and the Token-2022 permanent delegate, close authority and transfer hook. Bytes that
+  do not decode, or belong to another owner or program, make that check `unavailable`.
 - **Secrets stay out of output.** RPC/WebSocket/webhook URLs and the Telegram bot token are
   credentials. They are read from environment variables. The config file refuses inline
   `rpc_url`, `ws_url`, `webhook_url`, `telegram_bot_token` and `discord_webhook_url`. Every

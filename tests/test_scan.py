@@ -3,7 +3,7 @@ import unittest
 from watchtower.rpc import RpcClient, RpcUnavailable
 from watchtower.scan import run_scan
 
-from .helpers import DELEGATOR, EMPTY, JUP, NONCE_AUTH, PYUSD, SPL, T22, USDC, FixtureRpc
+from .helpers import DELEGATOR, EMPTY, JUP, NONCE_AUTH, PYUSD, SPL, T22, USDC, FixtureRpc, as_base64
 
 
 def scan(wallets, mints=(), programs=(), **kw):
@@ -97,7 +97,7 @@ class TokenScanTests(unittest.TestCase):
 
         def route(m, p):
             if m == "getTokenAccountsByOwner" and p[1]["programId"] == T22:
-                return tabo
+                return as_base64(tabo)
             return orig(m, p)
 
         rep = run_scan(RpcClient(transport=route), [{"pubkey": DELEGATOR, "label": "x"}])
